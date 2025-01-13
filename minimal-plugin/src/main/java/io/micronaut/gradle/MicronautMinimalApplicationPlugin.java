@@ -16,6 +16,7 @@
 package io.micronaut.gradle;
 
 import io.micronaut.gradle.graalvm.GraalUtil;
+import io.micronaut.gradle.internal.AutomaticDependency;
 import org.apache.tools.ant.taskdefs.condition.Os;
 import org.gradle.api.Action;
 import org.gradle.api.Plugin;
@@ -24,12 +25,11 @@ import org.gradle.api.Task;
 import org.gradle.api.artifacts.Configuration;
 import org.gradle.api.artifacts.ConfigurationContainer;
 import org.gradle.api.artifacts.dsl.DependencyHandler;
+import org.gradle.api.file.ConfigurableFileCollection;
+import org.gradle.api.file.FileCollection;
 import org.gradle.api.file.SourceDirectorySet;
 import org.gradle.api.plugins.ApplicationPlugin;
-import org.gradle.api.plugins.JavaApplication;
-import org.gradle.api.plugins.JavaPluginConvention;
 import org.gradle.api.plugins.PluginManager;
-import org.gradle.api.provider.Property;
 import org.gradle.api.tasks.JavaExec;
 import org.gradle.api.tasks.SourceSet;
 import org.gradle.api.tasks.SourceSetContainer;
@@ -37,10 +37,8 @@ import org.gradle.api.tasks.SourceSetOutput;
 import org.gradle.api.tasks.TaskContainer;
 
 import java.io.File;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -51,33 +49,43 @@ import static io.micronaut.gradle.PluginsHelper.resolveRuntime;
  * A plugin which allows building Micronaut applications, without support
  * for GraalVM or Docker.
  */
+@SuppressWarnings("Convert2Lambda")
 public class MicronautMinimalApplicationPlugin implements Plugin<Project> {
     public static final String CONFIGURATION_DEVELOPMENT_ONLY = "developmentOnly";
     // This flag is used for testing purposes only
     public static final String INTERNAL_CONTINUOUS_FLAG = "io.micronaut.internal.gradle.continuous";
 
-    private static final Map<String, String> LOGGER_CONFIG_FILE_TO_DEPENDENCY = Collections.unmodifiableMap(new HashMap<String, String>() {
-        {
-            put("logback.xml", "ch.qos.logback:logback-classic");
-            put("simplelogger.properties", "org.slf4j:slf4j-simple");
-        }
-    });
+    private static final Map<String, String> LOGGER_CONFIG_FILE_TO_DEPENDENCY = Map.of(
+        "logback.xml", "ch.qos.logback:logback-classic",
+        "simplelogger.properties", "org.slf4j:slf4j-simple"
+    );
 
     @Override
     public void apply(Project project) {
         PluginManager plugins = project.getPluginManager();
         plugins.apply(ApplicationPlugin.class);
         plugins.apply(MicronautComponentPlugin.class);
-
+        PluginsHelper.registerVersionExtensions(MicronautRuntimeDependencies.KNOWN_VERSION_PROPERTIES, project);
         Configuration developmentOnly = createDevelopmentOnlyConfiguration(project);
         configureLogging(project);
         configureMicronautRuntime(project);
         configureJavaExecTasks(project, developmentOnly);
     }
 
-    private void configureJavaExecTasks(Project project, Configuration developmentOnly) {
+
+    private void configureJavaExecTasks(Project project, Configuration developmentOnlyConfiguration) {
         final TaskContainer tasks = project.getTasks();
+        ConfigurationContainer configurations = project.getConfigurations();
+        Configuration developmentRuntimeClasspath = configurations.create("developmentRuntimeClasspath", conf -> {
+            conf.setCanBeResolved(true);
+            conf.setCanBeConsumed(true);
+            Configuration runtimeClasspath = configurations.getByName("runtimeClasspath");
+            conf.extendsFrom(runtimeClasspath);
+            conf.extendsFrom(developmentOnlyConfiguration);
+            AttributeUtils.copyAttributes(project.getProviders(), runtimeClasspath, conf);
+        });
         tasks.withType(JavaExec.class).configureEach(javaExec -> {
+            var sourceSets = PluginsHelper.findSourceSets(project);
             if (javaExec.getName().equals("run")) {
                 javaExec.dependsOn(tasks.named(MicronautComponentPlugin.INSPECT_RUNTIME_CLASSPATH_TASK_NAME));
                 javaExec.jvmArgs(
@@ -89,28 +97,31 @@ public class MicronautMinimalApplicationPlugin implements Plugin<Project> {
                 }
                 // https://github.com/micronaut-projects/micronaut-gradle-plugin/issues/385
                 javaExec.getOutputs().upToDateWhen(t -> false);
+                FileCollection classpath = javaExec.getClasspath();
+                if (classpath instanceof ConfigurableFileCollection cp) {
+                    Set<Object> from = cp.getFrom();
+                    from.clear();
+                    cp.from(sourceSets.getByName(SourceSet.MAIN_SOURCE_SET_NAME).getOutput());
+                    cp.from(developmentRuntimeClasspath);
+                }
             }
-            javaExec.classpath(developmentOnly);
 
             // If -t (continuous mode) is enabled feed parameters to the JVM
-            // that allows it to shutdown on resources changes so a rebuild
+            // that allows it to shut down on resources changes so a rebuild
             // can apply a restart to the application
             if (project.getGradle().getStartParameter().isContinuous() || Boolean.getBoolean(INTERNAL_CONTINUOUS_FLAG)) {
-                SourceSetContainer sourceSets = project.getConvention()
-                        .getPlugin(JavaPluginConvention.class)
-                        .getSourceSets();
                 SourceSet sourceSet = sourceSets.findByName("main");
                 if (sourceSet != null) {
-                    Map<String, Object> sysProps = new LinkedHashMap<>();
+                    var sysProps = new LinkedHashMap<String, Object>();
                     sysProps.put("micronaut.io.watch.restart", true);
                     sysProps.put("micronaut.io.watch.enabled", true);
+                    FileCollection sourceDirectories = sourceSet.getAllSource().getSourceDirectories();
                     //noinspection Convert2Lambda
-                    javaExec.doFirst(new Action<Task>() {
+                    javaExec.doFirst(new Action<>() {
                         @Override
                         public void execute(Task workaroundEagerSystemProps) {
-                            String watchPaths = sourceSet
-                                    .getAllSource()
-                                    .getSrcDirs()
+                            String watchPaths = sourceDirectories
+                                    .getFiles()
                                     .stream()
                                     .map(File::getPath)
                                     .collect(Collectors.joining(","));
@@ -143,8 +154,7 @@ public class MicronautMinimalApplicationPlugin implements Plugin<Project> {
 
     private void configureLogging(Project p) {
         DependencyHandler dependencyHandler = p.getDependencies();
-        SourceSetContainer sourceSets = p.getConvention().getPlugin(JavaPluginConvention.class)
-                .getSourceSets();
+        SourceSetContainer sourceSets = PluginsHelper.findSourceSets(p);
         SourceSet sourceSet = sourceSets.findByName(SourceSet.MAIN_SOURCE_SET_NAME);
         if (sourceSet != null) {
             SourceDirectorySet resources = sourceSet.getResources();
@@ -152,7 +162,7 @@ public class MicronautMinimalApplicationPlugin implements Plugin<Project> {
             exit:
             for (File srcDir : srcDirs) {
                 for (Map.Entry<String, String> entry : LOGGER_CONFIG_FILE_TO_DEPENDENCY.entrySet()) {
-                    File loggerConfigFile = new File(srcDir, entry.getKey());
+                    var loggerConfigFile = new File(srcDir, entry.getKey());
                     if (loggerConfigFile.exists()) {
                         dependencyHandler.add(sourceSet.getRuntimeOnlyConfigurationName(), entry.getValue());
                         break exit;
@@ -169,24 +179,14 @@ public class MicronautMinimalApplicationPlugin implements Plugin<Project> {
             MicronautRuntimeDependencies.findApplicationPluginDependenciesByRuntime(micronautRuntime)
                     .toMap()
                     .forEach((scope, dependencies) -> {
-                for (String dependency : dependencies) {
-                    dependencyHandler.add(scope, dependency);
+                for (AutomaticDependency dependency : dependencies) {
+                    dependency.applyTo(project);
                 }
             });
             if (micronautRuntime == MicronautRuntime.GOOGLE_FUNCTION) {
                 configureGoogleCloudFunctionRuntime(project, p, dependencyHandler);
             }
-            ShadowPluginSupport.withShadowPlugin(project, () -> {
-                JavaApplication javaApplication = project
-                        .getExtensions().findByType(JavaApplication.class);
-                if (javaApplication != null) {
-                    Property<String> mainClass = javaApplication.getMainClass();
-                    if (mainClass.isPresent()) {
-                        project.setProperty("mainClassName", mainClass.get());
-                    }
-                }
-                ShadowPluginSupport.mergeServiceFiles(project);
-            });
+            ShadowPluginSupport.withShadowPlugin(project, () -> ShadowPluginSupport.mergeServiceFiles(project));
 
         });
     }
@@ -202,17 +202,16 @@ public class MicronautMinimalApplicationPlugin implements Plugin<Project> {
             run.dependsOn(taskContainer.findByName("processResources"), taskContainer.findByName("classes"));
             run.getMainClass().set("com.google.cloud.functions.invoker.runner.Invoker");
             run.setClasspath(ic);
-            run.setArgs(Arrays.asList(
+            run.setArgs(List.of(
                     "--target", "io.micronaut.gcp.function.http.HttpFunction",
                     "--port", 8080
             ));
+            SourceSet sourceSet = PluginsHelper.findSourceSets(p).getByName("main");
+            SourceSetOutput output = sourceSet.getOutput();
+            String runtimeClasspath = project.files(project.getConfigurations().getByName("runtimeClasspath"),
+                    output
+            ).getAsPath();
             run.doFirst(t -> {
-                JavaPluginConvention plugin = project.getConvention().getPlugin(JavaPluginConvention.class);
-                SourceSet sourceSet = plugin.getSourceSets().getByName("main");
-                SourceSetOutput output = sourceSet.getOutput();
-                String runtimeClasspath = project.files(project.getConfigurations().getByName("runtimeClasspath"),
-                        output
-                ).getAsPath();
                 ((JavaExec) t).args("--classpath",
                         runtimeClasspath
                 );

@@ -16,29 +16,39 @@ import io.micronaut.gradle.crac.tasks.CheckpointScriptTask;
 import io.micronaut.gradle.docker.DockerBuildStrategy;
 import io.micronaut.gradle.docker.model.MicronautDockerImage;
 import io.micronaut.gradle.docker.tasks.BuildLayersTask;
+import org.gradle.api.Action;
 import org.gradle.api.GradleException;
 import org.gradle.api.NamedDomainObjectContainer;
 import org.gradle.api.Plugin;
 import org.gradle.api.Project;
+import org.gradle.api.Task;
 import org.gradle.api.file.RegularFile;
 import org.gradle.api.plugins.ExtensionContainer;
 import org.gradle.api.plugins.PluginManager;
 import org.gradle.api.provider.Provider;
 import org.gradle.api.tasks.TaskContainer;
 import org.gradle.api.tasks.TaskProvider;
+import org.gradle.jvm.toolchain.JavaLanguageVersion;
 
 import javax.annotation.Nullable;
 import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.util.Collections;
+import java.util.List;
 import java.util.Optional;
 import java.util.function.Consumer;
 
 import static io.micronaut.gradle.Strings.capitalize;
 
+@SuppressWarnings({"java:S5738", "Convert2Lambda"}) // Using deprecated getPlatform method still, until it's removal in 4.0.0
 public class MicronautCRaCPlugin implements Plugin<Project> {
 
     public static final String CRAC_DEFAULT_BASE_IMAGE = "ubuntu:22.04";
     public static final String CRAC_DEFAULT_BASE_IMAGE_PLATFORM = "linux/amd64";
+    public static final String ARM_ARCH = "aarch64";
+    public static final String X86_64_ARCH = "amd64";
+    public static final String DEFAULT_OS = "linux-glibc";
     public static final String CRAC_DEFAULT_READINESS_COMMAND = "curl --output /dev/null --silent --head http://localhost:8080";
     private static final String CRAC_TASK_GROUP = "CRaC";
     public static final String BUILD_DOCKER_DIRECTORY = "docker/";
@@ -54,7 +64,7 @@ public class MicronautCRaCPlugin implements Plugin<Project> {
         ExtensionContainer extensions = project.getExtensions();
         MicronautExtension micronautExtension = extensions.getByType(MicronautExtension.class);
         CRaCConfiguration configuration = createCRaCConfiguration(project);
-        NamedDomainObjectContainer<MicronautDockerImage> dockerImages = (NamedDomainObjectContainer<MicronautDockerImage>) micronautExtension.getExtensions().findByName("dockerImages");
+        var dockerImages = (NamedDomainObjectContainer<MicronautDockerImage>) micronautExtension.getExtensions().findByName("dockerImages");
         createCheckpointDockerImage(project, dockerImages.findByName("main"), configuration);
     }
 
@@ -63,8 +73,18 @@ public class MicronautCRaCPlugin implements Plugin<Project> {
         CRaCConfiguration crac = micronautExtension.getExtensions().create("crac", CRaCConfiguration.class);
         crac.getEnabled().convention(true);
         crac.getBaseImage().convention(CRAC_DEFAULT_BASE_IMAGE);
-        crac.getPlatform().convention(CRAC_DEFAULT_BASE_IMAGE_PLATFORM);
         crac.getPreCheckpointReadinessCommand().convention(CRAC_DEFAULT_READINESS_COMMAND);
+
+        // Default to current architecture
+        String osArch = System.getProperty("os.arch");
+        crac.getArch().convention(ARM_ARCH.equals(osArch) ? ARM_ARCH : X86_64_ARCH);
+
+        // Default to linux-glibc
+        crac.getOs().convention(DEFAULT_OS);
+
+        // Default to Java 17
+        crac.getJavaVersion().convention(JavaLanguageVersion.of(17));
+
         return crac;
     }
 
@@ -127,10 +147,17 @@ public class MicronautCRaCPlugin implements Plugin<Project> {
         TaskProvider<CRaCCheckpointDockerfile> dockerFileTask = tasks.register(dockerFileTaskName, CRaCCheckpointDockerfile.class, task -> {
             task.setGroup(CRAC_TASK_GROUP);
             task.setDescription("Builds a Checkpoint Docker File for image " + imageName);
+            if (f.exists()) {
+                task.getCustomCheckpointDockerfile().set(f);
+            }
             task.getDestFile().set(targetCheckpointDockerFile);
             task.getBaseImage().set(configuration.getBaseImage());
             task.getPlatform().set(configuration.getPlatform());
+            task.getArch().set(configuration.getArch());
+            task.getOs().set(configuration.getOs());
+            task.getJavaVersion().set(configuration.getJavaVersion());
             task.setupDockerfileInstructions();
+            task.getLayers().convention(buildLayersTask.flatMap(BuildLayersTask::getLayers));
         });
 
         TaskProvider<DockerBuildImage> dockerBuildTask = tasks.register(adaptTaskName("checkpointBuildImage", imageName), DockerBuildImage.class, task -> {
@@ -173,16 +200,28 @@ public class MicronautCRaCPlugin implements Plugin<Project> {
             task.targetContainerId(checkpointContainer.flatMap(DockerCreateContainer::getContainerId));
         });
         TaskProvider<DockerLogsContainer> await = tasks.register("checkpointAwaitSuccess", DockerLogsContainer.class, task -> {
-            TeeStringWriter stringWriter = new TeeStringWriter(project.getLogger());
+            File checkpointFile = new File(task.getTemporaryDir(), "checkpoint.log");
+            checkpointFile.deleteOnExit();
             task.dependsOn(start);
             task.finalizedBy(removeContainer);
             task.getFollow().set(true);
             task.getTailAll().set(true);
             task.getContainerId().set(start.flatMap(DockerExistingContainer::getContainerId));
-            task.setSink(stringWriter);
-            task.doLast(t -> {
-                if (!stringWriter.toString().contains("Snapshotting complete")) {
-                    throw new GradleException("Checkpoint container failed");
+            task.getSink().fileValue(checkpointFile);
+            // Do not use lambda, or it's not compatible with Gradle's config cache
+            task.doLast(new Action<>() {
+                @Override
+                public void execute(Task t) {
+                    List<String> lines;
+                    try {
+                        lines = Files.readAllLines(checkpointFile.toPath());
+                    } catch (IOException e) {
+                        throw new GradleException("Checkpoint container failed");
+                    }
+                    lines.forEach(task.getLogger()::lifecycle);
+                    if (lines.stream().noneMatch(l -> l.contains("Snapshotting complete"))) {
+                        throw new GradleException("Checkpoint container failed");
+                    }
                 }
             });
         });
@@ -194,22 +233,15 @@ public class MicronautCRaCPlugin implements Plugin<Project> {
         return (project.getRootProject().getName() + project.getPath() + "-checkpoint").replace(":", "-");
     }
 
-    private static class CheckpointTasksOfNote {
-
-        private final TaskProvider<CRaCCheckpointDockerfile> checkpointDockerBuild;
-        private final TaskProvider<DockerStartContainer> start;
-
-        private CheckpointTasksOfNote(
-                @Nullable TaskProvider<CRaCCheckpointDockerfile> checkpointDockerBuild,
-                TaskProvider<DockerStartContainer> start
-        ) {
-            this.checkpointDockerBuild = checkpointDockerBuild;
-            this.start = start;
-        }
+    private record CheckpointTasksOfNote(
+        @Nullable
+        TaskProvider<CRaCCheckpointDockerfile> checkpointDockerBuild,
+        TaskProvider<DockerStartContainer> start
+    ) {
 
         Optional<TaskProvider<CRaCCheckpointDockerfile>> getCheckpointDockerBuild() {
-            return Optional.ofNullable(checkpointDockerBuild);
-        }
+                return Optional.ofNullable(checkpointDockerBuild);
+            }
     }
 
     private Optional<TaskProvider<CRaCFinalDockerfile>> configureFinalDockerBuild(Project project,
@@ -224,13 +256,19 @@ public class MicronautCRaCPlugin implements Plugin<Project> {
         Provider<RegularFile> targetCheckpointDockerFile = project.getLayout().getBuildDirectory().file(BUILD_DOCKER_DIRECTORY + imageName + "/Dockerfile");
         TaskProvider<CRaCFinalDockerfile> dockerFileTask = tasks.register(dockerFileTaskName, CRaCFinalDockerfile.class, task -> {
             task.setGroup(CRAC_TASK_GROUP);
+            task.mustRunAfter(start);
             task.setDescription("Builds a Docker File for CRaC checkpointed image " + imageName);
+            if (f.exists()) {
+                task.getCustomFinalDockerfile().set(f);
+            }
             task.getDestFile().set(targetCheckpointDockerFile);
             task.getBaseImage().set(configuration.getBaseImage());
             task.getPlatform().set(configuration.getPlatform());
             task.getArgs().set(configuration.getFinalArgs());
+            task.getLayers().convention(buildLayersTask.flatMap(BuildLayersTask::getLayers));
             task.setupDockerfileInstructions();
         });
+        @SuppressWarnings("java:S1604") // Needs to be an anonymous action for cache config serialization
         TaskProvider<DockerBuildImage> dockerBuildTask = tasks.register(adaptTaskName("dockerBuildCrac", imageName), DockerBuildImage.class, task -> {
             task.dependsOn(buildLayersTask, scriptTask);
             task.getInputs().dir(start.map(t -> t.getOutputs().getFiles().getSingleFile()));
@@ -244,6 +282,14 @@ public class MicronautCRaCPlugin implements Plugin<Project> {
             }
             task.getImages().set(Collections.singletonList(project.getName()));
             task.getInputDir().set(dockerFileTask.flatMap(Dockerfile::getDestDir));
+            task.doLast(new Action<>() {
+                @Override
+                public void execute(Task t) {
+                    t.getLogger().warn("**********************************************************");
+                    t.getLogger().warn(" CRaC checkpoint files may contain sensitive information.");
+                    t.getLogger().warn("**********************************************************");
+                }
+            });
         });
 
         tasks.register(adaptTaskName("dockerPushCrac", imageName), DockerPushImage.class, task -> {
@@ -257,5 +303,4 @@ public class MicronautCRaCPlugin implements Plugin<Project> {
         }
         return Optional.empty();
     }
-
 }

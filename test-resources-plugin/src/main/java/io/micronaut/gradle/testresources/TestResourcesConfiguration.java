@@ -17,6 +17,7 @@ package io.micronaut.gradle.testresources;
 
 import io.micronaut.testresources.buildtools.KnownModules;
 import org.gradle.api.provider.ListProperty;
+import org.gradle.api.provider.MapProperty;
 import org.gradle.api.provider.Property;
 
 /**
@@ -46,7 +47,7 @@ public interface TestResourcesConfiguration extends KnownModules {
      * reuse that server, effectively ignoring the
      * existing configuration. This can be used to share
      * a server between multiple independent builds.
-     *
+     * <p>
      * If an explicit port is set, then security is lowered
      * and a token is no longer requested. Any client from
      * the loopback address can access the server.
@@ -86,7 +87,7 @@ public interface TestResourcesConfiguration extends KnownModules {
 
     /**
      * When set to true, then the server will be shared between
-     * independent builds (e.g two different projects built in separate
+     * independent builds (e.g. two different projects built in separate
      * checkout directories).
      *
      * @return the shared server property
@@ -101,4 +102,32 @@ public interface TestResourcesConfiguration extends KnownModules {
      * @return the namespace
      */
     Property<String> getSharedServerNamespace();
+
+    /**
+     * Server idle timeout, in minutes. If the server
+     * doesn't receive any request for this amount of
+     * time, it will stop itself.
+     *
+     * @return the server idle timeout
+     */
+    Property<Integer> getServerIdleTimeoutMinutes();
+
+    /**
+     * System properties to be set on the test resources service JVM.
+     * @return the system properties
+     */
+    MapProperty<String, String> getServerSystemProperties();
+
+    /**
+     * Environment variables to be set on the test resources service JVM.
+     * @return the environment variables
+     */
+    MapProperty<String, String> getServerEnvironment();
+
+    /**
+     * Set this property to true if you want to start the test resources service
+     * with a debugger attached.
+     * @return the debug property
+     */
+    Property<Boolean> getDebugServer();
 }

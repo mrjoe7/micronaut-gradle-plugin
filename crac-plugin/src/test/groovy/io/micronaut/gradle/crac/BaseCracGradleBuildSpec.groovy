@@ -1,23 +1,22 @@
 package io.micronaut.gradle.crac
 
 import io.micronaut.gradle.AbstractGradleBuildSpec
-import org.intellij.lang.annotations.Language
 
 abstract class BaseCracGradleBuildSpec extends AbstractGradleBuildSpec {
 
-    File writeGroovyFile(String fileName, @Language("java") String content) {
+    File writeGroovyFile(String fileName,String content) {
         writeFile(fileName, content)
     }
 
-    File writeJavaFile(String fileName, @Language("java") String content) {
+    File writeJavaFile(String fileName, String content) {
         writeFile(fileName, content)
     }
 
-    File writeXmlFile(String fileName, @Language("xml") String content) {
+    File writeXmlFile(String fileName, String content) {
         writeFile(fileName, content)
     }
 
-    File writeYamlFile(String fileName, @Language("yaml") String content) {
+    File writeYamlFile(String fileName, String content) {
         writeFile(fileName, content)
     }
 
@@ -48,7 +47,7 @@ abstract class BaseCracGradleBuildSpec extends AbstractGradleBuildSpec {
                 id "io.micronaut.crac"
                 id "io.micronaut.minimal.application"
                 id "io.micronaut.docker"
-            }"""
+            }""".stripIndent()
     }
 
     String getRepositoriesBlock(boolean allowSnapshots = true) {
@@ -69,7 +68,7 @@ abstract class BaseCracGradleBuildSpec extends AbstractGradleBuildSpec {
     String getMicronautConfigBlock(String cracConfig = '') {
         """
             micronaut {
-                version "3.6.1"
+                version "$micronautVersion"
                 runtime("netty")
                 testRuntime("junit5")
                 processing {
@@ -88,6 +87,7 @@ ${cracConfig.readLines().collect {"                ${it}"}.join("\n")}
         """${getPluginsBlock(switchPluginOrder)}
           |$repositoriesBlock
           |$dependenciesBlock
+          |$withSerde
           |$micronautConfig
           |mainClassName="example.Application"
           |""".stripMargin()

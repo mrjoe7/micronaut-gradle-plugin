@@ -12,11 +12,36 @@ import spock.util.environment.Jvm
 
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.Paths
 import java.nio.file.StandardCopyOption
 
 abstract class AbstractGradleBuildSpec extends Specification {
     static boolean isGraalVmAvailable() {
-        return GraalUtil.isGraalJVM() || System.getenv("GRAALVM_HOME")
+        if (GraalUtil.isGraalJVM()) {
+            return true
+        }
+        String graalvmHome = System.getenv("GRAALVM_HOME")
+        if (graalvmHome != null) {
+            Path nativeImage = Paths.get(graalvmHome, "bin", "native-image")
+            if (Files.exists(nativeImage)) {
+                return true
+            }
+        }
+        return false
+    }
+
+    boolean allowSnapshots = false
+    // This flag is only for local tests, do not push with this flag set to true
+    boolean allowMavenLocal = false
+
+    boolean reproducibleArchives = true
+
+    String getMicronautVersion() {
+        System.getProperty("micronautVersion")
+    }
+
+    String getShadowVersion() {
+        System.getProperty("shadowVersion")
     }
 
     boolean containsDependency(String mavenCoordinate, String configuration) {
@@ -57,11 +82,26 @@ abstract class AbstractGradleBuildSpec extends Specification {
     protected void withSample(String name) {
         File sampleDir = new File("../samples/$name").canonicalFile
         copySample(sampleDir.toPath(), baseDir)
-
+        buildFile << """
+            allprojects {
+                $repositoriesBlock
+            }
+        """
         def jacocoConf = AbstractGradleBuildSpec.classLoader.getResourceAsStream("testkit-gradle.properties")?.text
         if (jacocoConf) {
             println "Configuring Code Coverage support: ${jacocoConf}"
             file("gradle.properties") << jacocoConf
+        }
+        File gradleProperties = file("gradle.properties")
+        if (gradleProperties.exists() && micronautVersion != null) {
+            def writer = new StringWriter()
+            gradleProperties.newReader().transformLine(writer) { line ->
+                if (line.startsWith("micronautVersion=")) {
+                    return "micronautVersion=$micronautVersion"
+                }
+                return line
+            }
+            gradleProperties.text = writer.toString()
         }
     }
 
@@ -80,11 +120,40 @@ abstract class AbstractGradleBuildSpec extends Specification {
         baseDir.resolve(relativePath).toFile()
     }
 
-    def getRepositoriesBlock(String dsl = 'groovy') {
-        """repositories {
-    mavenCentral()
-}"""
+    protected static String guardString(String s, boolean flag) {
+        if (flag) {
+            s
+        } else {
+            ""
+        }
     }
+
+    def getRepositoriesBlock(String dsl = 'groovy') {
+        if (dsl == 'groovy') {
+            """repositories {
+    ${guardString('mavenLocal()', allowMavenLocal)}
+    mavenCentral()
+    ${guardString('maven { url = "https://s01.oss.sonatype.org/content/repositories/snapshots" }', allowSnapshots)}
+}"""
+
+        } else {
+            """repositories {
+    ${guardString('mavenLocal()', allowMavenLocal)}
+    mavenCentral()
+    ${guardString('maven { setUrl("https://s01.oss.sonatype.org/content/repositories/snapshots/") }', allowSnapshots)}
+}"""
+
+        }
+    }
+
+    void withNativeImageDryRun() {
+        buildFile << """
+            graalvmNative.binaries.all {
+                buildArgs.add("--dry-run")
+            }
+        """
+    }
+
 
     private void prepareBuild() {
         if (postSettingsStatements) {
@@ -92,6 +161,25 @@ abstract class AbstractGradleBuildSpec extends Specification {
                 settingsFile << "\n$it\n"
             }
             postSettingsStatements.clear()
+        }
+        if (reproducibleArchives) {
+            if (buildFile.exists()) {
+                buildFile << """            
+                tasks.withType(AbstractArchiveTask).configureEach {
+                    preserveFileTimestamps = false
+                    reproducibleFileOrder = true
+                }
+            """
+            } else if (kotlinBuildFile.exists()) {
+                kotlinBuildFile << """            
+                tasks.withType<AbstractArchiveTask>().configureEach {
+                    setPreserveFileTimestamps(false)
+                    setReproducibleFileOrder(true)
+                }
+            """
+            }
+            // this is so that we don't append the same text on every invocation of builds
+            reproducibleArchives = false
         }
     }
 
@@ -102,12 +190,12 @@ abstract class AbstractGradleBuildSpec extends Specification {
 
     BuildResult build(String... args) {
         configureRunner(args)
-                .build()
+                .run()
     }
 
     BuildResult fails(String... args) {
         configureRunner(args)
-            .buildAndFail()
+                .buildAndFail()
     }
 
     GradleRunner configureRunner(String... args) {
@@ -138,16 +226,29 @@ abstract class AbstractGradleBuildSpec extends Specification {
         s.replaceAll("\\r\\n?", "\n")
     }
 
+    private static determineArgFileName(String lookupString) {
+        String name = lookupString.substring(lookupString.lastIndexOf('@') + 1)
+        return name.substring(0, name.indexOf(".args") + 5)
+    }
+
     static String argFileContentsOf(BuildResult result) {
         result.output.lines().filter {
-            it.contains('Starting process') && it.contains('bin/native-image')
+            it.contains('Starting process') && it.contains('bin/native-image') && !it.contains('--version')
         }.map {
             int workingDirIdx = it.indexOf('Working directory: ')
             int commandIdx = it.indexOf('Command: ')
             String workingDirectory = it.substring(workingDirIdx + 'Working directory: '.length(), commandIdx).trim()
-            new File(new File(workingDirectory), it.substring(it.lastIndexOf('@') + 1))
+            new File(new File(workingDirectory), determineArgFileName(it))
         }.findFirst()
                 .map { it.text }
                 .orElse("")
+    }
+
+    String getWithSerde() {
+        """
+            dependencies {
+                runtimeOnly 'io.micronaut.serde:micronaut-serde-jackson'
+            }
+        """
     }
 }

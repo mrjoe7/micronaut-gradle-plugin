@@ -7,9 +7,6 @@ import spock.lang.Unroll
 
 class ShadowJarSpec extends AbstractEagerConfiguringFunctionalTest {
 
-    private static final String SHADE_VERSION = "7.1.2"
-    private static final String MICRONAUT_VERSION = "3.4.0"
-
     @Unroll
     @Issue("https://github.com/micronaut-projects/micronaut-gradle-plugin/issues/406")
     def "merges service files when building shadow jar"(String runtime, String micronautGradlePlugin) {
@@ -21,13 +18,13 @@ class ShadowJarSpec extends AbstractEagerConfiguringFunctionalTest {
             plugins {
                 id "$micronautGradlePlugin"
                 id "application" 
-                id "com.github.johnrengelman.shadow" version "$SHADE_VERSION"
+                id "com.github.johnrengelman.shadow" version "$shadowVersion"
             }
 
             version = "1.0"
             
             micronaut {
-                version "$MICRONAUT_VERSION"
+                version "$micronautVersion"
                 runtime "$runtime"
                 processing {
                     annotations("example.*")
@@ -84,8 +81,8 @@ public class Application implements Runnable {
         result.output.contains("Hello, all!")
 
         where:
-        runtime   | micronautGradlePlugin
-        'none'    | 'io.micronaut.minimal.application'
-        'lambda'  | 'io.micronaut.minimal.library'
+        runtime           | micronautGradlePlugin
+        'none'            | 'io.micronaut.minimal.application'
+        'lambda_provided' | 'io.micronaut.minimal.library'
     }
 }

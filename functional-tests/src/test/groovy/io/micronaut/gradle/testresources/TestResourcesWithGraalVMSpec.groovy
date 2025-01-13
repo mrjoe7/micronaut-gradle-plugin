@@ -7,6 +7,10 @@ import spock.lang.Requires
 @Requires({ AbstractGradleBuildSpec.graalVmAvailable && !os.windows })
 class TestResourcesWithGraalVMSpec extends AbstractTestResourcesSpec {
 
+    def setup() {
+//        allowMavenLocal = true
+    }
+
     def "runs native tests"() {
         withSample("test-resources/data-mysql")
         buildFile.text = buildFile.text.replace("""plugins {
@@ -52,12 +56,15 @@ graalvmNative.binaries.all {
 """)
 
         when:
-        def result = build 'nativeRun'
+        def result = build 'nativeRun', "-Dtestresources.native$suffix"
 
         then:
         result.task(':nativeRun').outcome == TaskOutcome.SUCCESS
         result.output.contains "Loaded 2 test resources resolvers"
         result.output.contains "io.micronaut.testresources.mysql.MySQLTestResourceProvider"
         result.output.contains "io.micronaut.testresources.testcontainers.GenericTestContainerProvider"
+
+        where:
+        suffix << ["", "=true"]
     }
 }
