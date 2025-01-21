@@ -1,29 +1,33 @@
 package io.micronaut.gradle.graalvm;
 
+import io.micronaut.gradle.AnnotationProcessing;
+import io.micronaut.gradle.MicronautComponentPlugin;
 import io.micronaut.gradle.MicronautExtension;
 import io.micronaut.gradle.MicronautRuntime;
 import io.micronaut.gradle.PluginsHelper;
+import io.micronaut.gradle.SourceSetConfigurerRegistry;
+import io.micronaut.gradle.internal.AutomaticDependency;
 import org.graalvm.buildtools.gradle.NativeImagePlugin;
 import org.graalvm.buildtools.gradle.dsl.GraalVMExtension;
+import org.graalvm.buildtools.gradle.dsl.NativeImageOptions;
 import org.graalvm.buildtools.gradle.tasks.BuildNativeImageTask;
 import org.gradle.api.Plugin;
 import org.gradle.api.Project;
 import org.gradle.api.artifacts.DependencySet;
-import org.gradle.api.plugins.JavaPluginConvention;
-import org.gradle.api.provider.ListProperty;
 import org.gradle.api.provider.Provider;
 import org.gradle.api.tasks.SourceSet;
-import org.gradle.api.tasks.SourceSetContainer;
 import org.gradle.api.tasks.TaskContainer;
 import org.gradle.language.jvm.tasks.ProcessResources;
 
 import java.io.File;
-import java.util.Arrays;
-import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
+
+import static io.micronaut.gradle.PluginsHelper.CORE_VERSION_PROPERTY;
+import static io.micronaut.gradle.PluginsHelper.findMicronautExtension;
 
 /**
  * Support for building GraalVM native images.
@@ -36,25 +40,31 @@ public class MicronautGraalPlugin implements Plugin<Project> {
 
     public static final String RICH_OUTPUT_PROPERTY = "io.micronaut.graalvm.rich.output";
 
-    private static final Set<String> SOURCE_SETS = Collections.unmodifiableSet(new HashSet<>(Arrays.asList("main", "test")));
-    private static final List<String> GRAALVM_MODULE_EXPORTS = Collections.unmodifiableList(Arrays.asList(
+    private static final Set<String> SOURCE_SETS = Set.of("main", "test");
+    private static final List<String> GRAALVM_MODULE_EXPORTS = List.of(
             "org.graalvm.nativeimage.builder/com.oracle.svm.core.configure",
             "org.graalvm.nativeimage.builder/com.oracle.svm.core.jdk",
             "org.graalvm.nativeimage.builder/com.oracle.svm.core.jni",
             "org.graalvm.sdk/org.graalvm.nativeimage.impl"
-    ));
+    );
 
     @Override
     public void apply(Project project) {
         project.getPluginManager().apply(NativeImagePlugin.class);
         workaroundForResourcesDirectoryMissing(project);
         project.getPluginManager().withPlugin("io.micronaut.minimal.library", plugin -> {
-            MicronautExtension extension = project.getExtensions().findByType(MicronautExtension.class);
+            MicronautExtension extension = PluginsHelper.findMicronautExtension(project);
             configureAnnotationProcessing(project, extension);
         });
         project.getPluginManager().withPlugin("io.micronaut.minimal.application", plugin -> {
-            MicronautExtension extension = project.getExtensions().findByType(MicronautExtension.class);
+            MicronautExtension extension = PluginsHelper.findMicronautExtension(project);
             configureAnnotationProcessing(project, extension);
+        });
+        project.getPlugins().withType(MicronautComponentPlugin.class, unused -> {
+            var extension = PluginsHelper.findMicronautExtension(project);
+            var nativeLambdaExtension = extension.getExtensions().create("nativeLambda", NativeLambdaExtension.class);
+            nativeLambdaExtension.getLambdaRuntime().convention(NativeLambdaRuntime.API_GATEWAY_V1);
+            nativeLambdaExtension.getLambdaRuntimeClassName().convention(nativeLambdaExtension.getLambdaRuntime().map(NativeLambdaRuntime::getMainClassName));
         });
         GraalVMExtension graal = project.getExtensions().findByType(GraalVMExtension.class);
         graal.getBinaries().configureEach(options ->
@@ -64,15 +74,14 @@ public class MicronautGraalPlugin implements Plugin<Project> {
                         inf.getIgnoreExistingResourcesConfigFile().convention(true);
                         inf.getRestrictToProjectDependencies().convention(true);
                     }));
-                    options.jvmArgs(getGraalVMBuilderExports());
                     Provider<String> richOutput = project.getProviders().systemProperty(RICH_OUTPUT_PROPERTY);
                     if (richOutput.isPresent()) {
                         options.getRichOutput().convention(richOutput.map(Boolean::parseBoolean));
                     }
                 }
         );
-        project.getPluginManager().withPlugin("application", plugin -> {
-            TaskContainer tasks = project.getTasks();
+        TaskContainer tasks = project.getTasks();
+        project.getPluginManager().withPlugin("application", plugin ->
             tasks.withType(BuildNativeImageTask.class).named("nativeCompile", nativeImageTask -> {
                 MicronautRuntime mr = PluginsHelper.resolveRuntime(project);
                 if (mr.isLambdaProvided()) {
@@ -81,11 +90,11 @@ public class MicronautGraalPlugin implements Plugin<Project> {
                             .noneMatch(dependency -> Objects.equals(dependency.getGroup(), "io.micronaut.aws") && dependency.getName().equals("micronaut-function-aws"));
 
                     if (isAwsApp) {
-                        nativeImageTask.getOptions().get().getMainClass().set("io.micronaut.function.aws.runtime.MicronautLambdaRuntime");
+                        var nativeLambdaExtension = findMicronautExtension(project).getExtensions().getByType(NativeLambdaExtension.class);
+                        nativeImageTask.getOptions().get().getMainClass().set(nativeLambdaExtension.getLambdaRuntimeClassName());
                     }
                 }
-            });
-        });
+        }));
     }
 
     private void workaroundForResourcesDirectoryMissing(Project project) {
@@ -108,14 +117,22 @@ public class MicronautGraalPlugin implements Plugin<Project> {
     }
 
     private static void configureAnnotationProcessing(Project project, MicronautExtension extension) {
-        SourceSetContainer sourceSets = project
-                .getConvention()
-                .getPlugin(JavaPluginConvention.class)
-                .getSourceSets();
+        var registry = project.getExtensions().getByType(SourceSetConfigurerRegistry.class);
+        var knownSourceSets = new HashSet<SourceSet>();
+        registry.register(sourceSet -> {
+            addGraalVMAnnotationProcessorDependency(project, Set.of(sourceSet));
+            knownSourceSets.add(sourceSet);
+        });
+        var sourceSets = PluginsHelper.findSourceSets(project);
         project.afterEvaluate(unused -> {
-            ListProperty<SourceSet> sets = extension.getProcessing().getAdditionalSourceSets();
-            if (sets.isPresent()) {
-                addGraalVMAnnotationProcessorDependency(project, sets.get());
+            @SuppressWarnings("deprecation")
+            var sets = extension.getProcessing().getAdditionalSourceSets();
+            var additionalSourceSets = sets.get();
+            for (SourceSet sourceSet : additionalSourceSets) {
+                if (!knownSourceSets.contains(sourceSet)) {
+                    AnnotationProcessing.showAdditionalSourceSetDeprecationWarning(sourceSet);
+                    registry.register(sourceSet1 -> addGraalVMAnnotationProcessorDependency(project, Set.of(sourceSet)));
+                }
             }
         });
 
@@ -128,10 +145,9 @@ public class MicronautGraalPlugin implements Plugin<Project> {
 
     private static void addGraalVMAnnotationProcessorDependency(Project project, Iterable<SourceSet> sourceSets) {
         for (SourceSet sourceSet : sourceSets) {
-            project.getDependencies().add(
-                    sourceSet.getAnnotationProcessorConfigurationName(),
-                    "io.micronaut:micronaut-graal"
-            );
+            new AutomaticDependency(sourceSet.getAnnotationProcessorConfigurationName(),
+                    "io.micronaut:micronaut-graal",
+                    Optional.of(CORE_VERSION_PROPERTY)).applyTo(project);
         }
     }
 
@@ -139,5 +155,19 @@ public class MicronautGraalPlugin implements Plugin<Project> {
         return GRAALVM_MODULE_EXPORTS.stream()
                 .map(module -> "--add-exports=" + module + "=ALL-UNNAMED")
                 .toList();
+    }
+
+    /**
+     * This method isn't used directly in the plugin, but provided as a convenience
+     * for users in case a Micronaut module they are using is still, for whatever
+     * reason, using internal GraalVM APIs. This shouldn't be the case since Micronaut 4
+     * but there may be community modules which are still doing this.
+     * In this case the user can directly call this method to add the required exports.
+     *
+     * @param options the native binary on which to add options
+     */
+    @SuppressWarnings("unused")
+    public static void applyGraalVMBuilderExportsOn(NativeImageOptions options) {
+        options.jvmArgs(getGraalVMBuilderExports());
     }
 }

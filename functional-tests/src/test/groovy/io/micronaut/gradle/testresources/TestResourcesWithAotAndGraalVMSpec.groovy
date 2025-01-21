@@ -32,7 +32,7 @@ micronaut {
 """)
 
         when:
-        def result = build 'nativeOptimizedRun'
+        def result = build 'nativeOptimizedRun',  "-Dtestresources.native"
 
         then:
         result.task(':nativeOptimizedRun').outcome == TaskOutcome.SUCCESS

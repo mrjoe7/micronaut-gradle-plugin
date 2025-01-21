@@ -5,10 +5,6 @@ plugins {
 version = "0.1"
 group = "demo"
 
-repositories {
-    mavenCentral()
-}
-
 micronaut {
     testResources {
         // app1 uses MySQL

@@ -6,18 +6,15 @@ plugins {
 version = "0.1"
 group = "demo"
 
-repositories {
-    mavenCentral()
-}
-
 dependencies {
     annotationProcessor("io.micronaut:micronaut-http-validation")
     implementation("io.micronaut:micronaut-http-client")
     implementation("io.micronaut:micronaut-jackson-databind")
     implementation("io.micronaut:micronaut-runtime")
     implementation("jakarta.annotation:jakarta.annotation-api")
+    implementation("io.micronaut.validation:micronaut-validation")
     runtimeOnly("ch.qos.logback:logback-classic")
-    implementation("io.micronaut:micronaut-validation")
+    runtimeOnly("org.yaml:snakeyaml")
 }
 
 application {
@@ -25,7 +22,6 @@ application {
 }
 
 micronaut {
-    version = "3.5.1"
     runtime("netty")
     testRuntime("junit5")
     processing {
@@ -42,10 +38,11 @@ dependencies {
     implementation("io.micronaut.data:micronaut-data-jdbc")
     implementation("io.micronaut.sql:micronaut-jdbc-hikari")
     runtimeOnly("mysql:mysql-connector-java")
+    runtimeOnly("io.micronaut:micronaut-jackson-databind")
     // TEST_DEPENDENCIES_MARKER
 }
 
-tasks.withType(JavaExec) {
+tasks.withType(JavaExec).configureEach {
     if (System.getProperty("interruptStartup")) {
         systemProperty "interruptStartup", "true"
     }

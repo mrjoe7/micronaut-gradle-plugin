@@ -2,24 +2,30 @@ package io.micronaut.gradle.kotlin
 
 import io.micronaut.gradle.fixtures.AbstractEagerConfiguringFunctionalTest
 import org.gradle.testkit.runner.TaskOutcome
-import spock.lang.IgnoreIf
+import spock.lang.Shared
 
 class KotlinLibraryFunctionalTest extends AbstractEagerConfiguringFunctionalTest {
-    @IgnoreIf({ jvm.java16Compatible }) // https://youtrack.jetbrains.com/issue/KT-45545
-    def "test apply defaults for micronaut-library and kotlin with kotlin DSL"() {
+
+    @Shared
+    private final String kotlinVersion = System.getProperty("kotlinVersion")
+
+    @Shared
+    private final String kspVersion = System.getProperty("kspVersion")
+
+
+    def "test apply defaults for micronaut-library and KSP with kotlin DSL for #plugin"() {
         given:
         settingsFile << "rootProject.name = 'hello-world'"
         buildFile.delete()
         kotlinBuildFile << """
             plugins {
-                id("org.jetbrains.kotlin.jvm") version("1.6.21")
-                id("org.jetbrains.kotlin.kapt") version("1.6.21")
-                id("org.jetbrains.kotlin.plugin.allopen") version("1.6.21")
+                id("org.jetbrains.kotlin.jvm") version("$kotlinVersion")
+                id("com.google.devtools.ksp") version "$kspVersion"
                 id("io.micronaut.$plugin")
             }
             
             micronaut {
-                version("3.5.1")
+                version("$micronautVersion")
                 processing {
                     incremental(true)
                 }
@@ -44,33 +50,79 @@ class Foo {}
         println result.output
         then:
         result.task(":assemble").outcome == TaskOutcome.SUCCESS
-        result.output.contains("Creating bean classes for 1 type elements")
+        new File(testProjectDir.root, "build/generated/ksp/main/classes/example")
+                .listFiles()
+                ?.find { it.name.endsWith(".class") && it.name.contains('$Definition')}
 
         where:
         plugin << ['library', 'minimal.library']
     }
 
-    @IgnoreIf({ jvm.java16Compatible }) // https://youtrack.jetbrains.com/issue/KT-45545
-    def "test custom sourceSet for micronaut-library and kotlin with kotlin DSL"() {
+    def "test apply defaults for micronaut-library and kotlin with kotlin DSL for #plugin"() {
         given:
         settingsFile << "rootProject.name = 'hello-world'"
         buildFile.delete()
         kotlinBuildFile << """
             plugins {
-                id("org.jetbrains.kotlin.jvm") version("1.6.21")
-                id("org.jetbrains.kotlin.kapt") version("1.6.21")
-                id("org.jetbrains.kotlin.plugin.allopen") version("1.6.21")
+                id("org.jetbrains.kotlin.jvm") version("$kotlinVersion")
+                id("org.jetbrains.kotlin.kapt") version("$kotlinVersion")
+                id("org.jetbrains.kotlin.plugin.allopen") version("$kotlinVersion")
                 id("io.micronaut.$plugin")
             }
             
-            sourceSets {
-                val custom by creating {
-                    compileClasspath += sourceSets["main"].output
-                    runtimeClasspath += sourceSets["main"].output
-                }
-            }            
             micronaut {
-                version("3.5.1")
+                version("$micronautVersion")
+                processing {
+                    incremental(true)
+                }
+            }   
+            
+            ${getRepositoriesBlock('kotlin')}
+            
+        """
+        testProjectDir.newFolder("src", "main", "kotlin", "example")
+        def javaFile = testProjectDir.newFile("src/main/kotlin/example/Foo.kt")
+        javaFile.parentFile.mkdirs()
+        javaFile << """
+package example
+
+@jakarta.inject.Singleton
+class Foo {}
+"""
+
+        when:
+        def result = build('assemble')
+
+        println result.output
+        then:
+        result.task(":assemble").outcome == TaskOutcome.SUCCESS
+        testProjectDir.root.toPath()
+                .resolve('build/tmp/kapt3/classes/main/example/$Foo$Definition.class').toFile().exists()
+
+        where:
+        plugin << ['library', 'minimal.library']
+    }
+
+    def "test custom sourceSet for micronaut-library and kotlin with kotlin DSL for #plugin"() {
+        given:
+        settingsFile << "rootProject.name = 'hello-world'"
+        buildFile.delete()
+        kotlinBuildFile << """
+            plugins {
+                id("org.jetbrains.kotlin.jvm") version("$kotlinVersion")
+                id("org.jetbrains.kotlin.kapt") version("$kotlinVersion")
+                id("org.jetbrains.kotlin.plugin.allopen") version("$kotlinVersion")
+                id("io.micronaut.$plugin")
+            }
+            
+            val custom by sourceSets.creating
+            
+            dependencies {
+                "customImplementation"(project)
+            }
+                        
+            micronaut {
+                version("$micronautVersion")
                 processing {
                     incremental(true)
                     sourceSets(
@@ -98,7 +150,8 @@ class Foo {}
         println result.output
         then:
         result.task(":compileCustomKotlin").outcome == TaskOutcome.SUCCESS
-        result.output.contains("Creating bean classes for 1 type elements")
+        testProjectDir.root.toPath()
+                .resolve('build/tmp/kapt3/classes/custom/example/$Foo$Definition.class').toFile().exists()
 
         where:
         plugin << ['library', 'minimal.library']

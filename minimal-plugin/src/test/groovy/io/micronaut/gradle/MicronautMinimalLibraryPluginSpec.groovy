@@ -13,7 +13,7 @@ class MicronautMinimalLibraryPluginSpec extends AbstractGradleBuildSpec {
             }
             
             micronaut {
-                version "3.5.1"
+                version "$micronautVersion"
                 testRuntime "junit"
                 processing {
                     incremental true
@@ -63,7 +63,7 @@ class FooTest {
             }
             
             micronaut {
-                version "3.5.1"
+                version "$micronautVersion"
                 testRuntime "junit"
                 processing {
                     incremental true
@@ -122,7 +122,8 @@ class FooTest {
 
         then:
         result.task(":test").outcome == TaskOutcome.SUCCESS
-        result.output.contains("Creating bean classes for 1 type elements")
+        testProjectDir.root.toPath()
+                .resolve('build/classes/java/test/example/$FooTest$Definition.class').toFile().exists()
     }
 
     def "test add jaxrs processing"() {
@@ -134,7 +135,7 @@ class FooTest {
             }
             
             micronaut {
-                version "3.5.1"
+                version "$micronautVersion"
             }
             
             $repositoriesBlock
@@ -150,8 +151,8 @@ class FooTest {
         javaFile << """
 package example;
 
-import javax.ws.rs.GET;
-import javax.ws.rs.Path;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
 
 @Path("/foo")
 public class Foo {
@@ -169,7 +170,6 @@ public class Foo {
 
         then:
         result.task(":assemble").outcome == TaskOutcome.SUCCESS
-        result.output.contains("Creating bean classes for 1 type elements")
         new File(
                 testProjectDir.getRoot(),
                 'build/classes/java/main/example/$Foo$Definition.class'
@@ -185,7 +185,7 @@ public class Foo {
             }
             
             micronaut {
-                version "3.5.1"
+                version "$micronautVersion"
                 
                 processing {
                     incremental true
@@ -224,7 +224,6 @@ class Foo {}
 
         then:
         result.task(":assemble").outcome == TaskOutcome.SUCCESS
-        result.output.contains("Creating bean classes for 1 type elements")
         result.output.contains("Generating OpenAPI Documentation")
         new File(
                 testProjectDir.getRoot(),
@@ -241,7 +240,7 @@ class Foo {}
             }
             
             micronaut {
-                version "3.5.1"
+                version "$micronautVersion"
                 
                 processing {
                     incremental true
@@ -266,7 +265,6 @@ class Foo {}
 
         then:
         result.task(":assemble").outcome == TaskOutcome.SUCCESS
-        result.output.contains("Creating bean classes for 1 type elements")
         new File(
                 testProjectDir.getRoot(),
                 'build/classes/java/main/example/$Foo$Definition.class'
@@ -289,7 +287,7 @@ class Foo {}
                 }
             }            
             micronaut {
-                version "3.5.1"
+                version "$micronautVersion"
                 processing {
                     incremental true
                     sourceSets(
@@ -317,7 +315,6 @@ class Foo {}
 
         then:
         result.task(":compileCustomJava").outcome == TaskOutcome.SUCCESS
-        result.output.contains("Creating bean classes for 1 type elements")
         new File(
                 testProjectDir.getRoot(),
                 'build/classes/java/custom/example/$Foo$Definition.class'
@@ -333,7 +330,7 @@ class Foo {}
             }
             
             micronaut {
-                version "3.5.1"
+                version "$micronautVersion"
             }
             
             $repositoriesBlock
@@ -374,7 +371,8 @@ class Foo {
 
         then:
         result.task(":test").outcome == TaskOutcome.SUCCESS
-        result.output.contains("Creating bean classes for 1 type elements")
+        testProjectDir.root.toPath()
+                .resolve('build/classes/java/test/example/$Foo$Definition.class').toFile().exists()
     }
 
     def "test custom sourceSets for micronaut-library and groovy"() {
@@ -394,7 +392,7 @@ class Foo {
                 }
             }                    
             micronaut {
-                version "3.5.1"
+                version "$micronautVersion"
                 processing {
                     incremental true
                     sourceSets(
@@ -406,8 +404,9 @@ class Foo {
             $repositoriesBlock
             
             dependencies {
-                customImplementation("org.codehaus.groovy:groovy")
+                customImplementation("org.apache.groovy:groovy")
             }
+            $withSerde
         """
         testProjectDir.newFolder("src", "custom", "groovy", "example")
         def javaFile = testProjectDir.newFile("src/custom/groovy/example/Foo.groovy")
@@ -444,7 +443,7 @@ class Foo {}
             }
             
             micronaut {
-                version "3.5.1"
+                version "$micronautVersion"
             }
             
             $repositoriesBlock
@@ -481,13 +480,16 @@ class Foo {}
             }
             
             micronaut {
-                version "3.5.1"
+                version "$micronautVersion"
             }
             
             $repositoriesBlock
             
             dependencies {
                 compileOnly "io.micronaut.openapi:micronaut-openapi"
+                compileOnly("io.micronaut:micronaut-http") {
+                    because "The Micronaut OpenAPI processor needs Micronaut HTTP at compile time"
+                }
                 compileOnly "io.swagger.core.v3:swagger-annotations"
             }
             

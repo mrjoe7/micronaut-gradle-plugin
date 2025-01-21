@@ -14,10 +14,12 @@ class MicronautApplicationPluginSpec extends AbstractGradleBuildSpec {
             }
             
             micronaut {
-                version "3.5.1"
+                version "$micronautVersion"
                 runtime "netty"
                 testRuntime "junit5"
             }
+            
+            $withSerde
             
             $repositoriesBlock
             mainClassName="example.Application"
@@ -56,8 +58,9 @@ public class ExampleTest {
         println result.output
 
         then:
-        result.output.contains('Creating bean classes for 1 type elements')
         task.outcome == TaskOutcome.SUCCESS
+        testProjectDir.root.toPath()
+                .resolve('build/classes/java/test/example/$ExampleTest$Definition.class').toFile().exists()
 
         where:
         plugins << [
@@ -124,7 +127,6 @@ public class ExampleTest {
 //
 //        def task = result.task(":test")
 //        then:
-//        result.output.contains('Creating bean classes for 1 type elements')
 //        task.outcome == TaskOutcome.SUCCESS
 //    }
 
@@ -139,16 +141,14 @@ public class ExampleTest {
             }
 
             micronaut {
-                version "3.0.1"
+                version "$micronautVersion"
                 runtime "netty"
             }
 
-            repositories {
-                mavenCentral()
-            }
+            $repositoriesBlock
 
             dependencies {
-                implementation "org.codehaus.groovy:groovy:3.0.5"
+                implementation "org.apache.groovy:groovy"
             }
             mainClassName="example.Application"
         """

@@ -18,45 +18,46 @@ package io.micronaut.gradle;
 import org.gradle.api.DefaultTask;
 import org.gradle.api.file.ConfigurableFileCollection;
 import org.gradle.api.file.RegularFileProperty;
-import org.gradle.api.tasks.CacheableTask;
 import org.gradle.api.tasks.InputFiles;
+import org.gradle.api.tasks.Input;
+import org.gradle.api.tasks.Internal;
 import org.gradle.api.tasks.OutputFile;
 import org.gradle.api.tasks.PathSensitive;
 import org.gradle.api.tasks.PathSensitivity;
 import org.gradle.api.tasks.TaskAction;
+import org.gradle.work.DisableCachingByDefault;
 
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.util.Set;
+import java.util.stream.Collectors;
 
-@CacheableTask
+@DisableCachingByDefault(because = "Not worth caching")
 public abstract class ApplicationClasspathInspector extends DefaultTask {
     @InputFiles
     @PathSensitive(PathSensitivity.RELATIVE)
-    abstract ConfigurableFileCollection getResources();
+    public abstract ConfigurableFileCollection getResources();
 
-    /**
-     * The runtime classpath. Curently we only care about the file names,
-     * which is why the path sensitivity is set to name only.
-     * @return the runtime classpath
-     */
-    @InputFiles
-    @PathSensitive(PathSensitivity.NAME_ONLY)
-    abstract ConfigurableFileCollection getRuntimeClasspath();
+    @Internal
+    public abstract ConfigurableFileCollection getRuntimeClasspath();
+
+    @Input
+    public Set<String> getResolvedClasspathNames() {
+        return getRuntimeClasspath().getFiles().stream().map(File::getName).collect(Collectors.toSet());
+    }
 
     @OutputFile
-    abstract RegularFileProperty getReportFile();
+    public abstract RegularFileProperty getReportFile();
 
     @TaskAction
     void inspect() throws IOException {
-        try (PrintWriter writer = new PrintWriter(new FileWriter(getReportFile().get().getAsFile()))) {
+        try (var writer = new PrintWriter(new FileWriter(getReportFile().get().getAsFile()))) {
             Set<File> resources = getResources().getFiles();
             if (resources.stream().anyMatch(ApplicationClasspathInspector::isYamlConfigurationFile)) {
                 writer.println("YAML configuration file detected");
-                Set<File> runtimeClasspath = getRuntimeClasspath().getFiles();
-                if (runtimeClasspath.stream().noneMatch(f -> f.getName().startsWith("snakeyaml"))) {
+                if (getResolvedClasspathNames().stream().noneMatch(n -> n.startsWith("snakeyaml"))) {
                     writer.println("Didn't find snakeyaml on classpath. Failing");
                     throw new RuntimeException("YAML configuration file detected but snakeyaml is not on classpath. Make sure to add a runtimeOnly dependency on snakeyaml, e.g 'runtimeOnly(\"org.yaml:snakeyaml\")'");
                 }

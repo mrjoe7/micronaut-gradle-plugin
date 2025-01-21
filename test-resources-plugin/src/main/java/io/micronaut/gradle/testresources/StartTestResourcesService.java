@@ -23,6 +23,7 @@ import org.gradle.api.file.ConfigurableFileCollection;
 import org.gradle.api.file.DirectoryProperty;
 import org.gradle.api.file.RegularFileProperty;
 import org.gradle.api.model.ObjectFactory;
+import org.gradle.api.provider.MapProperty;
 import org.gradle.api.provider.Property;
 import org.gradle.api.tasks.Classpath;
 import org.gradle.api.tasks.Input;
@@ -62,7 +63,7 @@ public abstract class StartTestResourcesService extends DefaultTask {
     @InputFiles
     @Classpath
     @Incremental
-    abstract ConfigurableFileCollection getClasspath();
+    public abstract ConfigurableFileCollection getClasspath();
 
     /**
      * The directory where the settings to connect to
@@ -73,7 +74,7 @@ public abstract class StartTestResourcesService extends DefaultTask {
      * @return the directory where to write settings
      */
     @OutputDirectory
-    abstract DirectoryProperty getSettingsDirectory();
+    public abstract DirectoryProperty getSettingsDirectory();
 
     /**
      * This file is used by the test server once started,
@@ -83,7 +84,7 @@ public abstract class StartTestResourcesService extends DefaultTask {
      * @return the port file
      */
     @Internal
-    abstract RegularFileProperty getPortFile();
+    public abstract RegularFileProperty getPortFile();
 
     /**
      * An explicit port to use when starting the test
@@ -93,7 +94,7 @@ public abstract class StartTestResourcesService extends DefaultTask {
      */
     @Input
     @Optional
-    abstract Property<Integer> getExplicitPort();
+    public abstract Property<Integer> getExplicitPort();
 
     /**
      * An access token which must be used by clients
@@ -103,7 +104,7 @@ public abstract class StartTestResourcesService extends DefaultTask {
      */
     @Input
     @Optional
-    abstract Property<String> getAccessToken();
+    public abstract Property<String> getAccessToken();
 
     /**
      * Client timeout, in seconds, to the server.
@@ -115,7 +116,18 @@ public abstract class StartTestResourcesService extends DefaultTask {
      */
     @Input
     @Optional
-    abstract Property<Integer> getClientTimeout();
+    public abstract Property<Integer> getClientTimeout();
+
+    /**
+     * Server idle timeout, in minutes. If the server
+     * doesn't receive any request for this amount of
+     * time, it will stop itself.
+     *
+     * @return the server idle timeout
+     */
+    @Input
+    @Optional
+    public abstract Property<Integer> getServerIdleTimeoutMinutes();
 
     /**
      * Allows starting the test server in foreground
@@ -126,7 +138,7 @@ public abstract class StartTestResourcesService extends DefaultTask {
      */
     @Internal
     @Option(option = "block", description = "Runs the test server in foreground, blocking until the server is stopped.")
-    abstract Property<Boolean> getForeground();
+    public abstract Property<Boolean> getForeground();
 
     /**
      * An internal file used to determine if the server
@@ -135,14 +147,15 @@ public abstract class StartTestResourcesService extends DefaultTask {
      * @return the stop file location
      */
     @Internal
-    abstract RegularFileProperty getStopFile();
+    public abstract RegularFileProperty getStopFile();
 
     /**
      * If set to true, the service will be started with debug enabled.
+     *
      * @return the debug flag
      */
     @Internal
-    abstract Property<Boolean> getDebugServer();
+    public abstract Property<Boolean> getDebugServer();
 
     /**
      * An internal property used to determine if the
@@ -154,13 +167,19 @@ public abstract class StartTestResourcesService extends DefaultTask {
      * @return the standalone mode property
      */
     @Internal
-    abstract Property<Boolean> getStandalone();
+    public abstract Property<Boolean> getStandalone();
 
     @Internal
-    abstract Property<Boolean> getUseClassDataSharing();
+    public abstract Property<Boolean> getUseClassDataSharing();
 
     @Internal
-    abstract DirectoryProperty getClassDataSharingDir();
+    public abstract DirectoryProperty getClassDataSharingDir();
+
+    @Input
+    public abstract MapProperty<String, String> getSystemProperties();
+
+    @Input
+    public abstract MapProperty<String, String> getEnvironment();
 
     @Inject
     protected abstract ExecOperations getExecOperations();
@@ -200,18 +219,19 @@ public abstract class StartTestResourcesService extends DefaultTask {
             }
 
             private void startService(ServerUtils.ProcessParameters processParameters) {
-                try {
-                    getExecOperations().javaexec(spec -> {
-                        spec.getMainClass().set(processParameters.getMainClass());
-                        spec.setDebug(getDebugServer().getOrElse(false));
-                        List<File> classpath = processParameters.getClasspath();
-                        spec.setClasspath(getObjects().fileCollection().from(classpath));
-                        spec.setJvmArgs(processParameters.getJvmArguments());
-                        processParameters.getSystemProperties().forEach(spec::systemProperty);
-                        processParameters.getArguments().forEach(spec::args);
-                    });
-                } catch (GradleException e) {
-                    getLogger().info("Test server stopped");
+                var result = getExecOperations().javaexec(spec -> {
+                    spec.getMainClass().set(processParameters.getMainClass());
+                    spec.setDebug(getDebugServer().getOrElse(false));
+                    List<File> classpath = processParameters.getClasspath();
+                    spec.setClasspath(getObjects().fileCollection().from(classpath));
+                    spec.setJvmArgs(processParameters.getJvmArguments());
+                    processParameters.getSystemProperties().forEach(spec::systemProperty);
+                    getSystemProperties().get().forEach(spec::systemProperty);
+                    getEnvironment().get().forEach(spec::environment);
+                    processParameters.getArguments().forEach(spec::args);
+                });
+                if (result.getExitValue() != 0) {
+                    throw new GradleException("Test server failed to start");
                 }
             }
 
@@ -221,14 +241,15 @@ public abstract class StartTestResourcesService extends DefaultTask {
             }
         };
         ServerUtils.startOrConnectToExistingServer(
-                getExplicitPort().getOrNull(),
-                getPortFile().map(f -> f.getAsFile().toPath()).getOrNull(),
-                getSettingsDirectory().get().getAsFile().toPath(),
-                getAccessToken().getOrNull(),
-                cdsDir,
-                getClasspath().getFiles(),
-                getClientTimeout().getOrNull(),
-                serverFactory);
+            getExplicitPort().getOrNull(),
+            getPortFile().map(f -> f.getAsFile().toPath()).getOrNull(),
+            getSettingsDirectory().get().getAsFile().toPath(),
+            getAccessToken().getOrNull(),
+            cdsDir,
+            getClasspath().getFiles(),
+            getClientTimeout().getOrNull(),
+            getServerIdleTimeoutMinutes().getOrNull(),
+            serverFactory);
     }
 
 }
