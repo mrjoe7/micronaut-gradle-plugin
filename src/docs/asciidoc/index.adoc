@@ -1,30 +1,21 @@
 = Micronaut Gradle plugin
-:native-build-tools-version: 0.9.13
-:kotlin-version: 1.6.21
-:micronaut-version: 3.5.1
-:gradle-version: 7.5.1
-:shadow-version: 7.1.2
 :native-gradle-plugin: https://graalvm.github.io/native-build-tools/{native-build-tools-version}/gradle-plugin.html
 :gradle-docs: https://docs.gradle.org/{gradle-version}/userguide
 :gradle-toolchains: {gradle-docs}/toolchains.html
-:default-docker-image: openjdk:17-alpine
+:default-docker-image: eclipse-temurin:17-jre
 :docker-plugin: https://github.com/bmuschko/gradle-docker-plugin
 :aws-docs: https://micronaut-projects.github.io/micronaut-aws/latest/guide/index.html#customRuntimes
 :testresources-guide: https://micronaut-projects.github.io/micronaut-test-resources/latest/guide
 
 Version {gradle-project-version}
 
-== What's new
+== Compatibility notes
 
-NOTE: Documentation for the 2.x branch can be found https://github.com/micronaut-projects/micronaut-gradle-plugin/tree/2.0.x#readme[here].
+This Gradle plugin collection is designed for Micronaut 4.x and requires Gradle 8+. This version defaults to Micronaut {micronaut-version} and is tested with Gradle {gradle-version}.
 
-The 3.0.0 version of the plugin integrates with the {native-gradle-plugin}[official GraalVM plugin] which introduces some breaking changes:
+Micronaut 3.x users should use the 3.x branch which documentation can be found https://github.com/micronaut-projects/micronaut-gradle-plugin/tree/3.7.x#readme[here].
 
-    - the `nativeImage` task is now replaced with `nativeCompile`
-    - native image configuration happens in the `graalvmNative` DSL block
-    - The GraalVM SDK being used depends on how you configure {gradle-toolchains}[toolchains]
-
-Please refer to the <<native-image, native image section>> for more help: the <<toolchain-behavior,toolchain selection mechanism might be surprising to you>>.
+Micronaut 2.x users, should use the 2.x branch which documentation can be found https://github.com/micronaut-projects/micronaut-gradle-plugin/tree/2.0.x#readme[here].
 
 == The Gradle plugins
 
@@ -36,6 +27,7 @@ This project currently consists of different plugins:
 - the https://plugins.gradle.org/plugin/io.micronaut.library[`io.micronaut.library`] plugin is aimed at building Micronaut libraries.
 - the https://plugins.gradle.org/plugin/io.micronaut.graalvm[`io.micronaut.graalvm`] plugin integrates with the official {native-gradle-plugin}[GraalVM Native Build Tools plugin] and configures it for Micronaut applications.
 - the https://plugins.gradle.org/plugin/io.micronaut.aot[`io.micronaut.aot`] plugin integrates with Micronaut AOT to produce optimized binaries.
+- the https://plugins.gradle.org/plugin/io.micronaut.platform.catalog[`io.micronaut.platform.catalog`] plugin imports the Micronaut Platform version catalog so that you can easily add Micronaut dependencies in your build scripts.
 
 === Individual plugins
 
@@ -82,6 +74,10 @@ For example, the `minimal` plugins can be used to reduce the number of tasks, fo
 
 |https://plugins.gradle.org/plugin/io.micronaut.test-resources-consumer[`io.micronaut.test-resources-consumer`]
 |Provides ability to use test resources of other projects of multiproject builds
+|
+
+|https://plugins.gradle.org/plugin/io.micronaut.openapi[`io.micronaut.openapi`]
+|Adds support for generating OpenAPI clients or servers from an OpenAPI definition.
 |
 
 |===
@@ -154,6 +150,140 @@ $ curl https://launch.micronaut.io/demo.zip?lang=kotlin \
   -o demo.zip && unzip demo.zip -d demo && cd demo
 ----
 
+[[sec:selecting-micronaut-version]]
+== Selecting the Micronaut version
+
+[[sec:micronaut-platform-catalog-plugin]]
+=== The Micronaut Platform Catalog plugin
+
+We recommend that you apply the `io.micronaut.platform.catalog` plugin to your `settings.gradle(.kts)` file.
+This plugin will automatically import the Micronaut version catalog, which provides a number of advantages:
+
+- all supported Micronaut modules are part of the platform catalog, making it easy to add new dependencies on Micronaut modules without having to remember their group, artifact and version numbers
+- all transitive dependencies of Micronaut modules are shipped with a recommended version that you can find in the version catalog
+- you can easily <<sec:overriding-version,override versions>> of individual Micronaut modules or even transitive dependencies which are managed by the Micronaut platform
+
+[IMPORTANT]
+This is a **settings** plugin, which means that it **must** be applied to your `settings.gradle(.kts)` file, not `build.gradle(.kts)`.
+
+Add the plugin to your `settings.gradle(.kts)` file:
+
+[source, groovy, subs="verbatim,attributes", role="multi-language-sample"]
+----
+plugins {
+  id 'io.micronaut.platform.catalog' version '{gradle-project-version}'
+}
+----
+
+[source, kotlin, subs="verbatim,attributes", role="multi-language-sample"]
+----
+plugins {
+  id("io.micronaut.platform.catalog") version "{gradle-project-version}"
+}
+----
+
+The catalog is then exposed with the name `mn` and can be used in your build scripts, for example:
+
+[source, groovy, subs="verbatim,attributes", role="multi-language-sample"]
+----
+dependencies {
+  // Use Spring Boot annotations
+  compileOnly mn.micronaut.spring.boot.annotation
+}
+----
+
+[source, kotlin, subs="verbatim,attributes", role="multi-language-sample"]
+----
+dependencies {
+  // Use Spring Boot annotations
+  compileOnly(mn.micronaut.spring.boot.annotation)
+}
+----
+
+=== Selecting the Micronaut Platform version
+
+The minimum requirement is to set the Micronaut version to use.
+Since Micronaut 4, this is the version of the Micronaut Platform (in previous releases, releases were bound to the version of Micronaut Core).
+
+The easiest is to set `micronautVersion` in `gradle.properties`.
+If you use a https://docs.gradle.org/current/userguide/platforms.html#sub:central-declaration-of-dependencies[version catalog], you can also set the version of Micronaut directly in your `libs.versions.toml` file:
+
+[source, toml]
+----
+[versions]
+micronaut="4.0.0"
+----
+
+This version will be shared by all Micronaut modules of your project.
+Alternatively, you can set the version in your `build.gradle(.kts)`:
+
+.Selecting the Micronaut version
+[source, groovy, subs="verbatim,attributes", role="multi-language-sample"]
+----
+micronaut {
+    version "{micronaut-version}"
+}
+----
+
+[source, kotlin, subs="verbatim,attributes", role="multi-language-sample"]
+----
+micronaut {
+    version.set("{micronaut-version}")
+}
+----
+
+[[sec:overriding-version]]
+=== Overriding Micronaut module versions
+
+Micronaut offers multiple options to override the default versions of its modules.
+For example, you may want to try a `SNAPSHOT` version of a module, or a release version which is not yet included in a new platform release.
+The easiest to do this is to make use of the Micronaut Platform version catalog.
+
+==== Using the Micronaut Platform Catalog plugin
+
+If you use the <<sec:micronaut-platform-catalog-plugin,Micronaut Platform Catalog plugin>>, then overriding versions of individual modules can easily be done by creating a `gradle/mn-override.versions.toml` file:
+
+[source,toml]
+----
+[versions]
+micronaut-core = "4.5.0" # override version of Micronaut Core
+ehcache = "3.8.2" # override version of ehcache
+----
+
+Note that overriding will only work if you use the dependency notations from the platform catalog (e.g `implementation(mn.ehcache)`).
+
+==== Using the DSL
+
+Alternatively, in each project which applies the Micronaut plugins, you can override versions of _specific modules_ via the DSL:
+
+.Overriding Micronaut module versions
+[source, groovy, subs="verbatim,attributes", role="multi-language-sample"]
+----
+micronaut {
+    coreVersion.set("4.5.0") // override the version of Micronaut Core
+}
+----
+
+[source, kotlin, subs="verbatim,attributes", role="multi-language-sample"]
+----
+micronaut {
+    coreVersion.set("4.5.0") // override the version of Micronaut Core
+}
+----
+
+There is only a limited list of module versions which can be overridden via the DSL:
+
+- `coreVersion` for Micronaut Core
+- `awsVersion` for Micronaut AWS
+- `azureVersion` for Micronaut Azure
+- `dataVersion` for Micronaut Data
+- `gcpVersion` for Micronaut Google Cloud
+- `jaxrsVersion` for Micronaut JAX-RS
+- `oraclecloudVersion` for Micronaut Oracle Cloud
+- `securityVersion` for Micronaut Security
+- `servletVersion` for Micronaut Servlet
+- `validationVersion` for Micronaut Validation
+
 == Micronaut Library Plugin
 
 .Applying the plugin
@@ -173,28 +303,12 @@ plugins {
 
 The https://plugins.gradle.org/plugin/io.micronaut.library[Micronaut library plugin] applies the following modifications to the build:
 
-* Applies the https://search.maven.org/artifact/io.micronaut/micronaut-bom[Micronaut Bill of Materials (BOM)]
+* Applies the https://search.maven.org/artifact/io.micronaut.platform/micronaut-platform[Micronaut Bill of Materials (BOM)]
 * Applies the `java-library` plugin
 * Configures annotation processing for the current language (Groovy, Java or Kotlin)
+* <<#sec:automatic-annotation-processors, Adds annotation processors automatically>> for Micronaut modules
 
 The `micronaut` DSL can be used to configure how this behaves.
-
-The minimum requirement is to set the Micronaut version to use. This can be done by setting `micronautVersion` in `gradle.properties` or as follows in `build.gradle(.kts)`:
-
-.Selecting the Micronaut version
-[source, groovy, subs="verbatim,attributes", role="multi-language-sample"]
-----
-micronaut {
-    version "{micronaut-version}"
-}
-----
-
-[source, kotlin, subs="verbatim,attributes", role="multi-language-sample"]
-----
-micronaut {
-    version.set("{micronaut-version}")
-}
-----
 
 Complete example with the default settings:
 
@@ -203,6 +317,10 @@ Complete example with the default settings:
 ----
 micronaut {
     version "{micronaut-version}"
+    // If set to false, then the `io.micronaut.platform:micronaut-platform` BOM
+    // will not be automatically applied, and you will have to add it yourself
+    // to your dependencies, or specify versions of Micronaut modules explicitly
+    importMicronautPlatform = true
     processing {
         // Sets whether incremental annotation processing is enabled
         incremental true
@@ -231,7 +349,11 @@ micronaut {
 ----
 micronaut {
     version.set("{micronaut-version}")
-    processing {
+    // If set to false, then the `io.micronaut.platform:micronaut-platform` BOM
+    // will not be automatically applied, and you will have to add it yourself
+    // to your dependencies, or specify versions of Micronaut modules explicitly
+   importMicronautPlatform.set(true)
+   processing {
         // Sets whether incremental annotation processing is enabled
         incremental.set(true)
         // Sets the module name.
@@ -362,6 +484,7 @@ The following additional tasks are provided by this plugin:
 * `dockerfileNative` - Builds a Docker File for GraalVM Native Image
 * `dockerBuildNative` - Builds a Native Docker Image using GraalVM Native Image
 * `dockerBuildCrac` - Builds a docker Image containing a CRaC enabled JDK and a pre-warmed, checkpointed application.
+* `dockerFileCrac` - Builds a Docker File for a CRaC checkpointed image.
 * `nativeCompile` - Builds a GraalVM Native Executable
 * `dockerPush` - Pushes a Docker Image to configured container registry
 * `dockerPushNative` - Pushes a Docker Image built with GraalVM Native Image to configured container registry
@@ -461,10 +584,10 @@ micronaut {
 }
 
 dependencies {
-    implementation "io.micronaut:micronaut-http-server-netty"
-    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:{kotlin-version}"
-    implementation "org.jetbrains.kotlin:kotlin-reflect:{kotlin-version}")
-    runtimeOnly "ch.qos.logback:logback-classic")
+    implementation("io.micronaut:micronaut-http-server-netty")
+    implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk8:{kotlin-version}")
+    implementation("org.jetbrains.kotlin:kotlin-reflect:{kotlin-version}")
+    runtimeOnly("ch.qos.logback:logback-classic")
     testImplementation("io.micronaut.test:micronaut-test-junit5")
     testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine")
 }
@@ -526,7 +649,7 @@ IMPORTANT: While the toolchain selection will properly select a GraalVM SDK whic
 
 If you have several GraalVM installations available, or that you want to disable the automatic toolchain recognition, we recommend that you do the following:
 
-- setup an environment variable named `GRAALVM_HOME` pointing to your GraalVM installation
+- set up an environment variable named `GRAALVM_HOME` pointing to your GraalVM installation
 - edit your `gradle.properties` file to add the following options:
 
 [source, subs="verbatim"]
@@ -594,11 +717,12 @@ graalvmNative {
 
 IMPORTANT: If you update an existing Micronaut application that contains the file `src/main/resources/META-INF/native-image/xxxxx/native-image.properties`, please make sure to delete the properties `-H:Name` and `-H:Class` from the file because they are managed automatically by the plugin.
 
+[#_build_mostly_static_native_executables]
 ==== Build "mostly static" native executables
 
-Since GraalVM 21.0, it is possible to create "mostly static" native images that can run in a _distroless_ docker image. You only need to configure the appropriate _baseImage_ and the plugin will automatically configure GraalVM:
+Since GraalVM 21.0, it is possible to create "mostly static" native images that can run in a _distroless_ docker image.You only need to configure the appropriate _baseImage_ and the plugin will automatically configure GraalVM:
 
-[source, groovy, subs="verbatim,attributes", role="multi-language-sample"]
+[source,groovy,subs="verbatim,attributes",role="multi-language-sample"]
 ----
 tasks.named('dockerfileNative') {
     baseImage('gcr.io/distroless/cc-debian10')
@@ -650,18 +774,18 @@ The default uses an `{default-docker-image}` base image, however you can easily 
 [source, groovy, subs="verbatim,attributes", role="multi-language-sample"]
 ----
 tasks.named("dockerfile") {
-  baseImage = "oracle/graalvm-ce:22.2.0-java17"
+  baseImage = "oracle/graalvm-ce:22.3.2-java17"
 }
 ----
 
 [source, kotlin, subs="verbatim,attributes", role="multi-language-sample"]
 ----
 tasks.named<MicronautDockerfile>("dockerfile") {
-  baseImage.set("oracle/graalvm-ce:22.2.0-java17")
+  baseImage.set("oracle/graalvm-ce:22.3.2-java17")
 }
 ----
 
-The above examples switches to use GraalVM CE 22.2.0 as a base image.
+The above examples switches to use GraalVM CE 22.3.2 as a base image.
 
 To build the application into a Native Executable you can run:
 
@@ -750,6 +874,25 @@ tasks.named<io.micronaut.gradle.docker.NativeImageDockerfile>("dockerfileNative"
 
 The above configuration uses a max heap setting of `128m` for Java and `64m` for native executable for the application.
 
+==== GraalVM JDK version
+
+By default, the `dockerfileNative` task will create a dockerfile that uses the Graal JDK base image with the current JDK version.
+To build a native executable inside docker with a specific GraalVM JDK version, you can use the `jdkVersion` property of the `dockerfileNative` task:
+
+[source, groovy, subs="verbatim,attributes", role="multi-language-sample"]
+----
+dockerfileNative {
+    jdkVersion = '21'
+}
+----
+
+[source, kotlin, subs="verbatim,attributes", role="multi-language-sample"]
+----
+tasks.named<io.micronaut.gradle.docker.NativeImageDockerfile>("dockerfileNative") {
+   jdkVersion.set("21")
+}
+----
+
 ==== Adding additional instructions
 
 To add additional docker instructions to the generated Dockerfile, such as adding a HEALTHCHECK, you can do the following. The additional instructions will be added at the end of the `Dockerfile` just before the `ENTRYPOINT`.
@@ -780,11 +923,45 @@ tasks.named<io.micronaut.gradle.docker.NativeImageDockerfile>("dockerfileNative"
 
 You can also add any of the other instructions/commands that the docker plugin supports, see {docker-plugin}/blob/master/src/main/groovy/com/bmuschko/gradle/docker/tasks/image/Dockerfile.groovy[the Dockerfile task documentation].
 
+==== Tweaking the generated docker files
+
+In case adding instructions doesn't generate the expected output, for example because of ordering issues, or because of multi-level docker files, an API will let you modify the generated files.
+
+For example, to customize the file generated by the `dockerfile` task, you can do the following:
+
+[source, groovy, subs="verbatim,attributes", role="multi-language-sample"]
+----
+tasks.named("dockerfile") {
+    editDockerfile {
+        after('COPY --link layers/libs /home/app/libs') {
+            insert('COPY --link server.iprof /home/app/server.iprof')
+        }
+    }
+}
+----
+
+[source, kotlin, subs="verbatim,attributes", role="multi-language-sample"]
+----
+tasks.named<io.micronaut.gradle.docker.DockerBuildOptions>("dockerfile") {
+    editDockerfile {
+        after("COPY --link layers/libs /home/app/libs") {
+            insert("COPY --link server.iprof /home/app/server.iprof")
+        }
+    }
+}
+----
+
+The `editDockerfile` DSL allows you to:
+
+- narrow down the scope of the lines to edit by using `before` and `after` methods
+- insert lines by calling `insert`
+- replace lines by calling `replace`
+
 ==== Duplicates on classpath
 
 In some projects, it may happen that different transitive dependencies have the same file name.
 In this case, the task which builds the layers will fail with a duplicate error.
-You can workaround this issue by configuring the duplicates strategy on the task:
+You can work around this issue by configuring the duplicates strategy on the task:
 
 [source, groovy, subs="verbatim,attributes", role="multi-language-sample"]
 ----
@@ -878,6 +1055,7 @@ The available runtimes are:
 * `oracle_function` - A Project.fn runtime for deploying Oracle Functions
 * `google_function` - A runtime for deploying Google Functions.
 * `azure_function` - A runtime for deploying Azure Functions
+* `http_poja` - A plain old java application runtime based on Apache libraries
 
 The advantage of allowing your dependencies to be dictated by the runtime is that you can potentially take the same application and deploy it to any of the above runtimes without changes.
 
@@ -886,21 +1064,40 @@ The advantage of allowing your dependencies to be dictated by the runtime is tha
 If you are interested in deploying your Micronaut application to AWS Lambda using GraalVM, you only need to set the runtime to `lambda` and execute `./gradlew buildNativeLambda`.
 This task will generate a GraalVM native executable inside a Docker container, and create the file `build/libs/your-app.zip` file ready to be deployed to AWS Lambda using a custom runtime. See more information in {aws-docs}[Micronaut AWS documentation].
 
+===== Architecture considerations
+
 The plugin will detect the host operating system architecture (based on the `os.arch` Java system property) and will install the corresponding GraalVM  binary distribution inside the Docker image.
 This means that when running packaging from an X86_64 (Intel/AMD) machine, the produced native executable will be an `amd64` binary, whilst on an ARM host (such as the new Mac M1) it will be an `aarch64` binary.
 
 To override this automatic selection, you can configure the `graalArch` property in a `dockerfileNative` configuration block in your build:
 
-[source, groovy]
+[source,groovy]
 ----
 dockerfileNative {
-    graalArch.set("amd64")
+    graalArch.set("x64")
+}
+----
+
+The compiled native binary will ultimately be copied into an `cgr.dev/chainguard/wolfi-base:latest` base image.
+These base images can be overridden via configuration see <<_base_image_and_pull_limits>> and <<_build_mostly_static_native_executables>>.
+
+[#_base_image_and_pull_limits]
+===== Base image and pull limits
+
+By default, the plugin will use amazonlinux pulled from Docker Hub as a base image for GraalVM native AWS Lambda executables.
+If you wish to switch to using a different base image (for example to use your own Docker repository or to use Amazon's public repository), you can configure the `baseImage` property in a `dockerfileNative` configuration block in your build:
+
+[source,groovy]
+----
+dockerfileNative {
+    // Use the image from the Amazon ECR Public Gallery
+    baseImage.set("public.ecr.aws/amazonlinux/amazonlinux:2023")
 }
 ----
 
 === Packaging the application
 
-By default the plugin doesn't create a runnable fatjar when running `./gradlew assemble`.
+By default, the plugin doesn't create a runnable fatjar when running `./gradlew assemble`.
 There are a couple of options:
 
 ==== Layered application
@@ -934,7 +1131,7 @@ plugins {
 == Micronaut GraalVM Plugin
 
 The https://plugins.gradle.org/plugin/io.micronaut.graalvm[Micronaut GraalVM plugin] is applied automatically by the
-https://github.com/micronaut-projects/micronaut-gradle-plugin#micronaut-application-plugin[Micronaut application plugin] (see below)
+https://github.com/micronaut-projects/micronaut-gradle-plugin#micronaut-application-plugin[Micronaut application plugin] (see below),
 and it provides tasks to generate a GraalVM native executable and also creates the GraalVM `resource-config.json` automatically with all the resources from the application.
 
 This plugin can be applied separately if you use the `application` plugin without the `io.micronaut.application` plugin (but we strongly recommend to switch to the `io.micronaut.application` plugin in this case).
@@ -1222,7 +1419,7 @@ In particular, it makes use of https://testcontainers.org/[Testcontainers] to au
 Test resources are handled by a "test resources service" which is a server accepting requests for test resources, which <<sec:test-resources-lifecycle,lifecycle>> is handled by the Gradle plugin.
 A test resources request is, to simplify, a request to resolve a _missing configuration property_.
 For example, if the `kafka.bootstrap-servers` property isn't set, Micronaut will query the test resources service for the value of this property.
-This will trigger the creaton of a a Kafka test container, and the service will answer with the URI to the bootstrap server.
+This will trigger the creaton of a Kafka test container, and the service will answer with the URI to the bootstrap server.
 
 [NOTE]
 ====
@@ -1297,6 +1494,7 @@ micronaut {
         inferClasspath = true // true by default
         additionalModules.add(JDBC_MYSQL) // empty by default
         clientTimeout = 60 // in seconds, maximum time to wait for resources to be available, 60s by default
+        serverIdleTimeoutMinutes = 60 // if the server doesn't receive any request for this amount of time, it will be shut down
         sharedServer = true // false by default
         sharedServerNamespace = 'custom' // unset by default
     }
@@ -1324,7 +1522,7 @@ micronaut {
 - by default, a test resources server will be started. This server uses a randomly available port, but you can override this by setting the `explicitPort` property instead.
 - by default, the plugin will automatically determine which modules to add to the test resources support, by inspecting the dependencies declared in the project. For example, if you use both `micronaut-data-jdbc` and `mysql-connector-java`, it will automatically add support for MySQL provisioning. Under some circumstances, you might want to disable this behavior by setting the `inferClasspath` property to `false`.
 - the `additionalModules` property can be used to explicitly declare test resources modules to be loaded. This is useful if inference failed to detect a module, or if you want to use <<sec:standalone-test-resources,a standalone test resources service>>.
-- if set to `true`, then the test server which is used by the project can be shared between independent builds (e.g different Git repositories): this can be useful in conjunction with a <<sec:standalone-test-resources,a standalone test resources service>>, where for example a producer is used in one project, and a consumer is defined in another, but both need to use the same messaging server.
+- if set to `true`, then the test server which is used by the project can be shared between independent builds (e.g. different Git repositories): this can be useful in conjunction with <<sec:standalone-test-resources,a standalone test resources service>>, where for example a producer is used in one project, and a consumer is defined in another, but both need to use the same messaging server.
 - if set, the `sharedServerNamespace` property will let you declare that the shared test resources service but be executed in a particular namespace. This can be useful if you need multiple shared servers (the default assumes a single shared server)
 
 [NOTE]
@@ -1338,6 +1536,28 @@ dependencies {
 }
 ----
 ====
+
+[[src:test-resources-native]]
+=== Using test resources with native binaries
+
+By default, native binaries are considered production code.
+This implies that the test resources client will _not_ be included in the generated native binaries and therefore, by default, native applications will not make use of test resources.
+
+In order to produce a native binary which is capable of using test resources, you must explicitly pass a system property to the build:
+
+[source,bash]
+----
+./gradlew nativeCompile -Dtestresources.native=true
+----
+
+or, if you want to run the binary directly:
+
+[source,bash]
+----
+./gradlew nativeRun -Dtestresources.native=true
+----
+
+Note that you don't need to do this for the `nativeTest` task, which is automatically configured to use test resources.
 
 [[sec:standalone-test-resources]]
 === Standalone test resources service
@@ -1361,7 +1581,7 @@ For this you have a couple options:
     1. you can use a shared test server, by setting the `sharedServer` property to `true` in the `testResources` extension.
     2. you can define a distinct project which role is to handle the test resources lifecycle
 
-The first solution comes with a major drawback: _shared servers_ are shared by all projects in the multi-project build, but also between projects of the same build. However the configuration of the server will depend on the _first one started_.
+The first solution comes with a major drawback: _shared servers_ are shared by all projects in the multi-project build, but also between projects of the same build. However, the configuration of the server will depend on the _first one started_.
 
 To avoid this problem it is recommended to declare a distinct project to handle test resources.
 Here, we're going to add a project called `shared-testresources` which is going to be a _test resources provider_:
@@ -1418,7 +1638,7 @@ plugins {
 }
 
 dependencies {
-    testresources(project(":shared-testresources"))           // <2>
+    testResourcesService(project(":shared-testresources"))           // <2>
 }
 ----
 <1> Use the test resources consumer plugin instead
@@ -1509,9 +1729,9 @@ WARNING: The Micronaut CRaC module is in experimental stages. Use at your own ri
 The `io.micronaut.crac` plugin provides extra integration with https://micronaut-projects.github.io/micronaut-crac/latest/guide/[Micronaut CRaC].
 Micronaut CRaC is a module which adds support for https://openjdk.org/projects/crac/[Coordinated Restore at Checkpoint] to Micronaut applications.
 
-It is capable of generating a docker image containing a CRaC enabled JDK and a pre-warmed, checkpointed application via a new task `dockerCracBuild`.
+It is capable of generating a docker image containing a CRaC enabled JDK and a pre-warmed, checkpointed application via a new task `dockerBuildCrac`.
 
-IMPORTANT: Currently CRaC support has only been tested on Ubuntu 18.04, 20.04 and 22.04.  It also requires an x86 machine architecture.
+IMPORTANT: Currently, CRaC support has only been tested on Ubuntu 18.04, 20.04 and 22.04.
 
 When executed, this task will:
 
@@ -1567,11 +1787,24 @@ micronaut {
         // the base docker image to use for the Checkpoint and final images
         baseImage = "ubuntu:22.04"
 
-        // The platform to build the image for (currently must be linux/amd64)
+        // The platform to use pulling the base image. Defaults to none specified. Deprecated, use arch instead.
         platform = "linux/amd64"
+
+        // The architecture of the CRaC JDK to use. Defaults to the architecture of the machine.
+        // (currently only 'aarch64' or 'amd64' are supported)
+        arch = "aarch64"
+
+        // The OS of the Azul CRaC JDK to use. Defaults to linux-glibc for the default base image.
+        os = "linux-glibc"
+
+        // The version of the Azul CRaC JDK to use in the image (currently only 17 is supported)
+        javaVersion = JavaLanguageVersion.of(17)
 
         // A command to run that will be successful when the application is ready to be checkpointed.
         preCheckpointReadinessCheck = "curl --output /dev/null --silent --head http://localhost:8080"
+
+        // The existing Docker network to use when running the application prior to checkpointing
+        network = "my-docker-network"
 
         // You can use these to replace the script that generates a checkpoint, and the script that warms up the
         // application prior to checkpointing
@@ -1592,11 +1825,24 @@ micronaut {
         // the base docker image to use for the Checkpoint and final images
         baseImage.set("ubuntu:22.04")
 
-        // The platform to build the image for (currently must be linux/amd64)
+        // The platform to build the image for (currently must be linux/amd64). Deprecated, use arch instead.
         platform.set("linux/amd64")
+
+        // The architecture of the CRaC JDK to use. Defaults to the architecture of the machine.
+        // (currently only 'aarch64' or 'amd64' are supported)
+        arch.set("aarch64")
+
+        // The OS of the Azul CRaC JDK to use. Defaults to linux-glibc for the default base image.
+        os.set("linux-glibc")
+
+        // The version of the Azul CRaC JDK to use in the image (currently only 17 is supported)
+        javaVersion.set(JavaLanguageVersion.of(17))
 
         // A command to run that will be successful when the application is ready to be checkpointed.
         preCheckpointReadinessCheck.set("curl --output /dev/null --silent --head http://localhost:8080")
+
+        // The existing Docker network to use when running the application prior to checkpointing
+        network.set("my-docker-network")
 
         // You can use these to replace the script that generates a checkpoint, and the script that warms up the
         // application prior to checkpointing
@@ -1605,6 +1851,333 @@ micronaut {
     }
 }
 ----
+
+== OpenAPI code generation
+
+The `io.micronaut.openapi` plugin adds support for generating https://www.openapis.org/[OpenAPI] clients or servers, given an OpenAPI definition, in both Java and Kotlin.
+
+The plugin adds an link:api/io/micronaut/gradle/openapi/OpenApiExtension.html[openapi] extension to the `micronaut` configuration block.
+
+=== Generating a client
+
+You can generate a client by configuring the extension via the `client { ... }` block:
+
+[source, groovy, subs="verbatim,attributes", role="multi-language-sample"]
+----
+micronaut {
+    ...
+    openapi {
+        client(file("src/openapi/my-definition.yml")) {
+            apiPackageName = "com.mycompany.api"
+            modelPackageName = "com.mycompany.model"
+            useOptional = true
+            clientId = "some-client-id"
+        }
+    }
+}
+----
+
+[source, kotlin, subs="verbatim,attributes", role="multi-language-sample"]
+----
+micronaut {
+    ...
+    openapi {
+        client(file("src/openapi/my-definition.yml")) {
+            apiPackageName.set("com.mycompany.api")
+            modelPackageName.set("com.mycompany.model")
+            useOptional.set(true)
+            clientId.set("some-client-id")
+            // Supports Kotlin codegen too
+            lang.set("kotlin")
+        }
+    }
+}
+----
+
+The generated sources will be found by default in your `$buildDir/generated/openapi/client` directory, and automatically added to your main source set (so the classes are directly available for you to use).
+
+You can generate multiple clients by adding multiple `client` blocks, in which case each client is identified by a name:
+
+[source, groovy, subs="verbatim,attributes", role="multi-language-sample"]
+----
+micronaut {
+    ...
+    openapi {
+        client("first", file("src/openapi/my-definition.yml")) {
+            apiPackageName = "com.mycompany.api"
+            modelPackageName = "com.mycompany.model"
+            useOptional = true
+            clientId = "some-client-id"
+        }
+        client("second", file("src/openapi/other-definition.yml")) {
+            apiPackageName = "com.mycompany.other.api"
+            modelPackageName = "com.mycompany.other.model"
+            useOptional = true
+            clientId = "some-other-client-id"
+        }
+    }
+}
+----
+
+[source, kotlin, subs="verbatim,attributes", role="multi-language-sample"]
+----
+micronaut {
+    ...
+    openapi {
+        client("first", file("src/openapi/my-definition.yml")) {
+            apiPackageName.set("com.mycompany.api")
+            modelPackageName.set("com.mycompany.model")
+            useOptional.set(true)
+            clientId.set("some-client-id")
+            // Supports Kotlin codegen too
+            lang.set("kotlin")
+        }
+        client("second", file("src/openapi/other-definition.yml")) {
+            apiPackageName.set("com.mycompany.other.api")
+            modelPackageName.set("com.mycompany.other.model")
+            useOptional.set(true)
+            clientId.set("other-client-id")
+            // Supports Kotlin codegen too
+            lang.set("kotlin")
+        }
+    }
+}
+----
+
+Please refer to link:api/io/micronaut/gradle/openapi/OpenApiClientSpec.html[OpenApiClientSpec] for the whole list of client configuration options.
+
+=== Generating a server
+
+You can generate a server by configuring the extension via the `server { ... }` block:
+
+[source, groovy, subs="verbatim,attributes", role="multi-language-sample"]
+----
+micronaut {
+    ...
+    openapi {
+        server(file("src/openapi/my-definition.yml")) {
+            apiPackageName = "com.mycompany.api"
+            modelPackageName = "com.mycompany.model"
+            controllerPackage = "com.mycompany.controller"
+        }
+    }
+}
+----
+
+[source, kotlin, subs="verbatim,attributes", role="multi-language-sample"]
+----
+micronaut {
+    ...
+    openapi {
+        server(file("src/openapi/my-definition.yml")) {
+            apiPackageName.set("com.mycompany.api")
+            modelPackageName.set("com.mycompany.model")
+            controllerPackage.set("com.mycompany.controller")
+            // Supports Kotlin codegen too
+            lang.set("kotlin")
+        }
+    }
+}
+----
+
+The generated sources will be found by default in your `$buildDir/generated/openapi/server` directory, and automatically added to your main source set (so the classes are directly available for you to use).
+
+You can generate multiple servers by providing a name to the `server` block:
+
+[source, groovy, subs="verbatim,attributes", role="multi-language-sample"]
+----
+micronaut {
+    ...
+    openapi {
+        server("first", file("src/openapi/my-definition.yml")) {
+            apiPackageName = "com.mycompany.api"
+            modelPackageName = "com.mycompany.model"
+            controllerPackage = "com.mycompany.controller"
+        }
+        server("second", file("src/openapi/other-definition.yml")) {
+            apiPackageName = "com.mycompany.other.api"
+            modelPackageName = "com.mycompany.other.model"
+            controllerPackage = "com.mycompany.other.controller"
+        }
+    }
+}
+----
+
+[source, kotlin, subs="verbatim,attributes", role="multi-language-sample"]
+----
+micronaut {
+    ...
+    openapi {
+        server("first", file("src/openapi/my-definition.yml")) {
+            apiPackageName.set("com.mycompany.api")
+            modelPackageName.set("com.mycompany.model")
+            controllerPackage.set("com.mycompany.controller")
+            // Supports Kotlin codegen too
+            lang.set("kotlin")
+        }
+        server("second", file("src/openapi/other-definition.yml")) {
+            apiPackageName.set("com.mycompany.other.api")
+            modelPackageName.set("com.mycompany.other.model")
+            controllerPackage.set("com.mycompany.other.controller")
+            // Supports Kotlin codegen too
+            lang.set("kotlin")
+        }
+    }
+}
+----
+
+NOTE: Server generation will generate interfaces that you have to implement in order to write your server code.
+
+Please refer to link:api/io/micronaut/gradle/openapi/OpenApiServerSpec.html[OpenApiServerSpec] for the whole list of client configuration options.
+
+=== Advanced configuration
+
+The Micronaut OpenAPI plugin lets you override the default Micronaut OpenAPI version to use.
+To do this, set the version in the `openapi` extension:
+
+[source, groovy, subs="verbatim,attributes", role="multi-language-sample"]
+----
+micronaut {
+    ...
+    openapi {
+        version = "5.0.2"
+    }
+}
+----
+
+[source, kotlin, subs="verbatim,attributes", role="multi-language-sample"]
+----
+micronaut {
+    ...
+    openapi {
+        version.set("5.0.2")
+    }
+}
+----
+
+In addition, it exposes a `openApiGenerator` configuration which can be used to declare additional dependencies to put on the generator classpath.
+This can be useful in case you want to implement your own generators, in which case you will also have to implement custom tasks which extend the link:api/io/micronaut/gradle/openapi/tasks/AbstractOpenApiGenerator.html[AbstractOpenApiGenerator task type].
+
+== Source Generator from Micronaut JSON Schema
+
+This plugins integrates with https://micronaut-projects.github.io/micronaut-json-schema/latest/guide/[Micronaut JSON Schema] in order to provide support for generating beans from https://json-schema.org[JSON Schema].
+
+The plugin adds a link:api/io/micronaut/gradle/jsonschema/JSONSchemaExtension.html[jsonschema] extension to the `micronaut` configuration block.
+
+Some important notes on configuration settings:
+
+- Default generation language is JAVA which can be modified. However, only the languages supported by  https://micronaut-projects.github.io/micronaut-sourcegen/latest/guide/[Micronaut SourceGen] are accepted.
+- The generator supports all remote references that obey at least one of the pattern rules given in `acceptedUrlPatterns` parameter. This parameter is configurable, and it's default value is `["^https://.*/.*.json"]`.
+
+The full list of configuration properties can be found link:api/io/micronaut/gradle/jsonschema/JsonSchemaSpec.html[in the documentation].
+
+=== Generating From URL
+
+You can generate sources by configuring the extension via the `fromUrl { ... }` block:
+
+[source, groovy, subs="verbatim,attributes", role="multi-language-sample"]
+----
+micronaut {
+    ...
+    jsonschema {
+        fromUrl("http://localhost:8080/animal.schema.json") {
+            acceptedUrlPatterns = ["^http://localhost:.*"]
+        }
+    }
+}
+----
+
+[source, kotlin, subs="verbatim,attributes", role="multi-language-sample"]
+----
+micronaut {
+    ...
+    jsonschema {
+        fromUrl("http://localhost:8080/animal.schema.json") {
+            acceptedUrlPatterns.set(arrayOf("^http://localhost:.*"))
+        }
+    }
+}
+----
+
+=== Generating From Local Files
+
+You can generate sources by configuring the extension via the `fromFile { ... }` block:
+
+[source, groovy, subs="verbatim,attributes", role="multi-language-sample"]
+----
+micronaut {
+    ...
+    jsonschema {
+        fromFile(file("animal.schema.json")) {
+            lang = "java"
+            outputDirectory = layout.getBuildDirectory.dir("generated/json-schema")
+            outputPackageName = "com.example.animal"
+        }
+    }
+}
+----
+
+[source, kotlin, subs="verbatim,attributes", role="multi-language-sample"]
+----
+micronaut {
+    ...
+    jsonschema {
+        fromFile(file("animal.schema.json")) {
+            lang.set("java")
+            outputDirectory = layout.getBuildDirectory.dir("generated/json-schema")
+            outputPackageName.set("com.example.animal")
+        }
+    }
+}
+----
+
+NOTE: While using the `fromFile` extension, the file input can also be a directory. In the case that a directory is given, all schemas including and under the specified directory are processed.
+
+[[additional-notes]]
+== Additional Notes
+
+[[sec:automatic-annotation-processors]]
+=== Automatic annotationProcessor dependencies
+
+When the plugin detects you have a dependency with a group id corresponding to a known annotation processor for it, it adds the annotation processor automatically. The following annotation processors are currently supported by this feature.
+
+* `io.micronaut.data:micronaut-data-processor`
+* `io.micronaut.jaxrs:micronaut-jaxrs-processor`
+* `io.micronaut.micrometer:micronaut-micrometer-annotation`
+* `io.micronaut.microstream:micronaut-microstream-annotations`
+* `io.micronaut.openapi:micronaut-openapi`
+* `io.micronaut.security:micronaut-security-annotations`
+* `io.micronaut.serde:micronaut-serde-processor`
+* `io.micronaut.spring:micronaut-spring-annotation`
+* `io.micronaut.tracing:micronaut-tracing-annotation`
+* `io.micronaut.validation:micronaut-validation-processor`
+
+[[sec:suppress-automatic-dependencies]]
+=== Suppressing automatic dependencies
+
+In some circumstances, automatic dependencies – e.g. annotation processors listed above – can get in the way. This should be rare, but it is possible to suppress them, as follows. It has no default and using suppression shifts responsibility of adding the dependencies to the user.
+
+.Suppressing automatic dependencies
+[source, groovy, subs="verbatim,attributes", role="multi-language-sample"]
+----
+micronaut {
+    // The Micronaut plugins can automatically add dependencies to your project. If, for some reason,
+    // a dependency shouldn't be automatically added, you can add its coordinates to this set.
+    // The format is "group:name". It must not include the version.
+    ignoredAutomaticDependencies.add("io.micronaut.data:micronaut-data-processor")
+}
+----
+
+[source, kotlin, subs="verbatim,attributes", role="multi-language-sample"]
+----
+micronaut {
+    // The Micronaut plugins can automatically add dependencies to your project. If, for some reason,
+    // a dependency shouldn't be automatically added, you can add its coordinates to this set.
+    // The format is "group:name". It must not include the version.
+    ignoredAutomaticDependencies.add("io.micronaut.data:micronaut-data-processor")
+}
+----
+
 
 == Upgrade notes
 

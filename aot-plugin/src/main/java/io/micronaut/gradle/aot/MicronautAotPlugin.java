@@ -15,9 +15,11 @@
  */
 package io.micronaut.gradle.aot;
 
+import io.micronaut.gradle.AttributeUtils;
 import io.micronaut.gradle.MicronautBasePlugin;
 import io.micronaut.gradle.MicronautComponentPlugin;
 import io.micronaut.gradle.MicronautExtension;
+import io.micronaut.gradle.PluginsHelper;
 import io.micronaut.gradle.ShadowPluginSupport;
 import io.micronaut.gradle.docker.MicronautDockerPlugin;
 import io.micronaut.gradle.docker.model.LayerKind;
@@ -33,8 +35,6 @@ import org.gradle.api.Project;
 import org.gradle.api.Task;
 import org.gradle.api.artifacts.Configuration;
 import org.gradle.api.artifacts.ConfigurationContainer;
-import org.gradle.api.attributes.Attribute;
-import org.gradle.api.attributes.AttributeContainer;
 import org.gradle.api.distribution.DistributionContainer;
 import org.gradle.api.distribution.plugins.DistributionPlugin;
 import org.gradle.api.file.ArchiveOperations;
@@ -46,10 +46,8 @@ import org.gradle.api.file.RelativePath;
 import org.gradle.api.java.archives.Attributes;
 import org.gradle.api.logging.Logger;
 import org.gradle.api.plugins.ApplicationPlugin;
-import org.gradle.api.plugins.ApplicationPluginConvention;
 import org.gradle.api.plugins.JavaApplication;
 import org.gradle.api.plugins.JavaPlugin;
-import org.gradle.api.plugins.JavaPluginConvention;
 import org.gradle.api.provider.Provider;
 import org.gradle.api.provider.ProviderFactory;
 import org.gradle.api.tasks.JavaExec;
@@ -64,7 +62,6 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
@@ -82,7 +79,7 @@ public abstract class MicronautAotPlugin implements Plugin<Project> {
     public static final String OPTIMIZED_DIST_NAME = "optimized";
     public static final String MAIN_BINARY_NAME = "main";
 
-    static final List<String> TYPES_TO_CHECK = Collections.unmodifiableList(Arrays.asList(
+    static final List<String> TYPES_TO_CHECK = List.of(
             "io.reactivex.Observable",
             "reactor.core.publisher.Flux",
             "kotlinx.coroutines.flow.Flow",
@@ -98,17 +95,22 @@ public abstract class MicronautAotPlugin implements Plugin<Project> {
             "io.methvin.watchservice.MacOSXListeningWatchService",
             "io.micronaut.core.async.publisher.CompletableFuturePublisher",
             "io.micronaut.core.async.publisher.Publishers.JustPublisher",
-            "io.micronaut.core.async.subscriber.Completable"));
+            "io.micronaut.core.async.subscriber.Completable"
+    );
 
-    public static final List<String> SERVICE_TYPES = Collections.unmodifiableList(Arrays.asList(
+    public static final List<String> SERVICE_TYPES = List.of(
             "io.micronaut.context.env.PropertySourceLoader",
             "io.micronaut.inject.BeanConfiguration",
             "io.micronaut.inject.BeanDefinitionReference",
             "io.micronaut.http.HttpRequestFactory",
             "io.micronaut.http.HttpResponseFactory",
-            "io.micronaut.core.beans.BeanIntrospectionReference"
-    ));
+            "io.micronaut.core.beans.BeanIntrospectionReference",
+            "io.micronaut.core.convert.TypeConverterRegistrar",
+            "io.micronaut.context.env.PropertyExpressionResolver"
+    );
     public static final String AOT_APPLICATION_CLASSPATH = "aotApplicationClasspath";
+    public static final String OPTIMIZED_RUNTIME_CLASSPATH_CONFIGURATION_NAME = "optimizedRuntimeClasspath";
+    public static final String DEFAULT_GENERATED_PACKAGE = "io.micronaut.aot.generated";
 
     @Inject
     protected abstract ArchiveOperations getArchiveOperations();
@@ -137,10 +139,9 @@ public abstract class MicronautAotPlugin implements Plugin<Project> {
             JavaApplication javaApplication = project.getExtensions().findByType(JavaApplication.class);
             if (javaApplication != null) {
                 String mainClass = javaApplication.getMainClass().get();
-                return mainClass.substring(0, mainClass.lastIndexOf("."));
-            } else {
-                return "io.micronaut.aot.generated";
+                return mainClass.contains(".") ? mainClass.substring(0, mainClass.lastIndexOf('.')) : DEFAULT_GENERATED_PACKAGE;
             }
+            return DEFAULT_GENERATED_PACKAGE;
         }));
         aotExtension.getOptimizeNetty().convention(false);
     }
@@ -152,16 +153,16 @@ public abstract class MicronautAotPlugin implements Plugin<Project> {
         TaskProvider<MicronautAotOptimizerTask> prepareJit = registerPrepareOptimizationTask(project, optimizerRuntimeClasspath, applicationClasspath, tasks, aotExtension, OptimizerIO.TargetRuntime.JIT);
         registerJavaExecOptimizedRun(project, tasks, prepareJit);
         TaskProvider<MicronautAotOptimizerTask> prepareNative = registerPrepareOptimizationTask(project, optimizerRuntimeClasspath, applicationClasspath, tasks, aotExtension, OptimizerIO.TargetRuntime.NATIVE);
-        registerOptimizedJar(project, tasks, prepareNative, OptimizerIO.TargetRuntime.NATIVE);
-        project.getPlugins().withType(NativeImagePlugin.class, p -> registerOptimizedBinary(project, prepareNative));
+        var optimizedNativeJarProvider = registerOptimizedJar(project, tasks, prepareNative, OptimizerIO.TargetRuntime.NATIVE);
+        project.getPlugins().withType(NativeImagePlugin.class, p -> registerOptimizedBinary(project, optimizedNativeJarProvider));
 
         registerCreateSamplesTasks(project, optimizerRuntimeClasspath, applicationClasspath, tasks, aotExtension);
     }
 
     private void registerCreateSamplesTasks(Project project, Configuration optimizerRuntimeClasspath, Configuration applicationClasspath, TaskContainer tasks, AOTExtension aotExtension) {
-        TaskProvider<Task> createAotSampleConfigurationFiles = tasks.register("createAotSampleConfigurationFiles", task -> {
-            task.setDescription("Generates Micronaut AOT sample configuration files");
-        });
+        TaskProvider<Task> createAotSampleConfigurationFiles = tasks.register("createAotSampleConfigurationFiles", task ->
+            task.setDescription("Generates Micronaut AOT sample configuration files")
+        );
         for (OptimizerIO.TargetRuntime targetRuntime : OptimizerIO.TargetRuntime.values()) {
             TaskProvider<MicronautAotSampleConfTask> createSample = tasks.register("createAot" + targetRuntime.getCapitalizedName() + "Sample", MicronautAotSampleConfTask.class, task -> {
                 task.setDescription("Creates a sample " + targetRuntime.getCapitalizedName() + " AOT configuration file");
@@ -180,7 +181,7 @@ public abstract class MicronautAotPlugin implements Plugin<Project> {
     private void registerOptimizedDistribution(Project project,
                                                TaskProvider<Jar> optimizedJar) {
         DistributionContainer distributions = project.getExtensions().getByType(DistributionContainer.class);
-        ApplicationPluginConvention appConvention = project.getConvention().getPlugin(ApplicationPluginConvention.class);
+        JavaApplication appConvention = project.getExtensions().getByType(JavaApplication.class);
         ConfigurableFileCollection classpath = project.getObjects().fileCollection();
         classpath.from(optimizedJar);
         classpath.from(project.getConfigurations().getByName(JavaPlugin.RUNTIME_CLASSPATH_CONFIGURATION_NAME));
@@ -190,7 +191,7 @@ public abstract class MicronautAotPlugin implements Plugin<Project> {
             task.setClasspath(classpath);
             task.getMainClass().set(javaApplication.getMainClass());
             task.getConventionMapping().map("applicationName", appConvention::getApplicationName);
-            task.getConventionMapping().map("outputDir", () -> new File(project.getBuildDir(), "optimizedScripts"));
+            task.getConventionMapping().map("outputDir", () -> new File(project.getLayout().getBuildDirectory().getAsFile().get(), "optimizedScripts"));
             task.getConventionMapping().map("executableDir", appConvention::getExecutableDir);
             task.getConventionMapping().map("defaultJvmOpts", appConvention::getApplicationDefaultJvmArgs);
         });
@@ -213,7 +214,7 @@ public abstract class MicronautAotPlugin implements Plugin<Project> {
                 Attributes attrs = manifest.getAttributes();
                 attrs.put("Main-Class", javaApplication.getMainClass());
                 attrs.put("Class-Path", project.getProviders().provider(() -> {
-                    List<String> classpath = new ArrayList<>();
+                    var classpath = new ArrayList<String>();
                     Configuration runtimeClasspath = project.getConfigurations()
                             .getByName(RUNTIME_CLASSPATH_CONFIGURATION_NAME);
 
@@ -237,28 +238,29 @@ public abstract class MicronautAotPlugin implements Plugin<Project> {
             });
         } else {
             dockerImages.create("optimized", image -> {
+                MicronautDockerPlugin.createDependencyLayers(image, project.getConfigurations().getByName(RUNTIME_CLASSPATH_CONFIGURATION_NAME));
                 image.addLayer(layer -> {
                     layer.getLayerKind().set(LayerKind.APP);
                     layer.getRuntimeKind().set(runtime == OptimizerIO.TargetRuntime.JIT ? RuntimeKind.JIT : RuntimeKind.NATIVE);
                     layer.getFiles().from(optimizedRunnerJar);
                 });
-                image.addLayer(layer -> {
-                    layer.getLayerKind().set(LayerKind.LIBS);
-                    layer.getFiles().from(layer.getFiles().from(project.getConfigurations().getByName(RUNTIME_CLASSPATH_CONFIGURATION_NAME))
-                    );
-                });
             });
         }
     }
 
-    private void registerOptimizedBinary(Project project, TaskProvider<MicronautAotOptimizerTask> prepareNative) {
+    private void registerOptimizedBinary(Project project, TaskProvider<Jar> optimizedJar) {
         GraalVMExtension graalVMExtension = project.getExtensions().getByType(GraalVMExtension.class);
         NamedDomainObjectContainer<NativeImageOptions> binaries = graalVMExtension.getBinaries();
         binaries.create(OPTIMIZED_BINARY_NAME, binary -> {
+            var mainSourceSet = PluginsHelper.findSourceSets(project).getByName(SourceSet.MAIN_SOURCE_SET_NAME);
             NativeImageOptions main = binaries.getByName(MAIN_BINARY_NAME);
             binary.getMainClass().set(main.getMainClass());
-            binary.getClasspath().from(main.getClasspath());
-            binary.getClasspath().from(prepareNative.map(MicronautAotOptimizerTask::getGeneratedClassesDirectory));
+            binary.getClasspath().from(optimizedJar);
+            binary.getClasspath().from(project.getConfigurations().findByName(mainSourceSet.getRuntimeClasspathConfigurationName()));
+            // The following lines are a hack for the fact that the GraalVM plugin doesn't configure all binaries
+            // to use the metadata repository, but only the ones that it knows about (`main` and `test`).
+            binary.getConfigurationFileDirectories().from(main.getConfigurationFileDirectories());
+            binary.getExcludeConfigArgs().convention(main.getExcludeConfigArgs());
             project.getPlugins().withId("java-library", p -> binary.getSharedLibrary().convention(true));
         });
     }
@@ -293,33 +295,34 @@ public abstract class MicronautAotPlugin implements Plugin<Project> {
     private void registerJavaExecOptimizedRun(Project project,
                                               TaskContainer tasks,
                                               TaskProvider<MicronautAotOptimizerTask> prepareJit) {
-        TaskProvider<Jar> mainJar = tasks.named("jar", Jar.class);
         TaskProvider<Jar> jarTask = registerOptimizedJar(project, tasks, prepareJit, OptimizerIO.TargetRuntime.JIT);
         ShadowPluginSupport.withShadowPlugin(project, () -> AotShadowSupport.registerShadowJar(project, getArchiveOperations(), tasks, jarTask));
         project.getPlugins().withType(DistributionPlugin.class, p -> registerOptimizedDistribution(project, jarTask));
         project.getPlugins().withType(ApplicationPlugin.class, p -> {
+            ConfigurationContainer configurations = project.getConfigurations();
+            Configuration optimizedRuntimeClasspath = configurations.create(OPTIMIZED_RUNTIME_CLASSPATH_CONFIGURATION_NAME, conf -> {
+                Configuration runtimeClasspath = configurations.getByName("runtimeClasspath");
+                conf.extendsFrom(runtimeClasspath);
+                conf.setCanBeConsumed(false);
+                conf.setCanBeConsumed(true);
+                // Use the same attributes as runtimeClasspath for resolution
+                AttributeUtils.copyAttributes(project.getProviders(), runtimeClasspath, conf);
+            });
+
             tasks.register("optimizedRun", JavaExec.class, task -> {
-                JavaExec runTask = tasks.named("run", JavaExec.class).get();
                 JavaApplication javaApplication = project.getExtensions().getByType(JavaApplication.class);
-                JavaPluginConvention javaPluginConvention = project.getConvention().getPlugin(JavaPluginConvention.class);
-                SourceSet mainSourceSet = javaPluginConvention.getSourceSets().getByName(SourceSet.MAIN_SOURCE_SET_NAME);
-                task.setGroup(runTask.getGroup());
                 task.setDescription("Executes the Micronaut application with AOT optimizations");
                 task.getMainClass().convention(javaApplication.getMainClass());
                 // https://github.com/micronaut-projects/micronaut-gradle-plugin/issues/385
                 task.getOutputs().upToDateWhen(t -> false);
-                Set<File> mainSourceSetOutput = mainSourceSet.getOutput().getFiles();
-                task.setClasspath(
-                        project.files(jarTask, mainSourceSet.getRuntimeClasspath().filter(f -> !mainJar.get().getArchiveFile().get().getAsFile().equals(f)
-                                && mainSourceSetOutput.stream().noneMatch(f::equals)
-                        )));
-                task.doFirst(new Action<Task>() {
+                task.setClasspath(project.files(jarTask, optimizedRuntimeClasspath));
+                task.doFirst(new Action<>() {
                     @Override
                     public void execute(Task t) {
                         if (task.getLogger().isDebugEnabled()) {
                             task.getLogger().debug(
-                                    "Running optimized entry point: " + task.getMainClass().get() +
-                                            "\nClasspath:\n    " + task.getClasspath().getFiles()
+                                    "Running optimized entry point: {}\nClasspath:\n    {}",
+                                    task.getMainClass().get(), task.getClasspath().getFiles()
                                             .stream()
                                             .map(File::getName)
                                             .collect(Collectors.joining("\n    "))
@@ -362,8 +365,9 @@ public abstract class MicronautAotPlugin implements Plugin<Project> {
     private Configurations prepareConfigurations(Project project, AOTExtension aotExtension) {
         ConfigurationContainer configurations = project.getConfigurations();
         // Internal configurations
+        var providers = project.getProviders();
         Configuration aotOptimizerRuntimeClasspath = configurations.create("aotOptimizerRuntimeClasspath", c -> {
-            configureAsRuntimeClasspath(configurations, c);
+            configureAsRuntimeClasspath(providers, configurations, c);
             c.getDependencies().addLater(aotExtension.getVersion().map(v -> project.getDependencies().create("io.micronaut.aot:micronaut-aot-api:" + v)));
             c.getDependencies().addLater(aotExtension.getVersion().map(v -> project.getDependencies().create("io.micronaut.aot:micronaut-aot-std-optimizers:" + v)));
             c.getDependencies().addLater(aotExtension.getVersion().map(v -> project.getDependencies().create("io.micronaut.aot:micronaut-aot-cli:" + v)));
@@ -379,7 +383,7 @@ public abstract class MicronautAotPlugin implements Plugin<Project> {
             c.setCanBeConsumed(false);
         });
         Configuration aotApplicationClasspath = configurations.create(AOT_APPLICATION_CLASSPATH, c -> {
-            configureAsRuntimeClasspath(configurations, c);
+            configureAsRuntimeClasspath(providers, configurations, c);
             Configuration runtimeClasspath = configurations.findByName(JavaPlugin.RUNTIME_CLASSPATH_CONFIGURATION_NAME);
             runtimeClasspath.getExtendsFrom().forEach(c::extendsFrom);
             c.extendsFrom(aotApplication);
@@ -392,19 +396,12 @@ public abstract class MicronautAotPlugin implements Plugin<Project> {
         );
     }
 
-    private void configureAsRuntimeClasspath(ConfigurationContainer configurations, Configuration configuration) {
+    private void configureAsRuntimeClasspath(ProviderFactory providers, ConfigurationContainer configurations, Configuration configuration) {
         configuration.setCanBeResolved(true);
         configuration.setCanBeConsumed(false);
 
-        Configuration runtimeClasspath = configurations.findByName(JavaPlugin.RUNTIME_CLASSPATH_CONFIGURATION_NAME);
-        configuration.attributes(attrs -> {
-            AttributeContainer baseAttributes = runtimeClasspath.getAttributes();
-            for (Attribute<?> attribute : baseAttributes.keySet()) {
-                Attribute<Object> attr = (Attribute<Object>) attribute;
-                Object value = baseAttributes.getAttribute(attr);
-                attrs.attribute(attr, value);
-            }
-        });
+        Configuration runtimeClasspath = configurations.getByName(JavaPlugin.RUNTIME_CLASSPATH_CONFIGURATION_NAME);
+        AttributeUtils.copyAttributes(providers, runtimeClasspath, configuration);
     }
 
     private static class JarExclusionSpec implements Action<FileCopyDetails> {
@@ -447,15 +444,10 @@ public abstract class MicronautAotPlugin implements Plugin<Project> {
         }
     }
 
-    private static final class Configurations {
-        private final Configuration aotOptimizerRuntimeClasspath;
-        private final Configuration aotApplication;
-        private final Configuration aotApplicationClasspath;
-
-        private Configurations(Configuration aotOptimizerRuntimeClasspath, Configuration aotApplication, Configuration aotApplicationClasspath) {
-            this.aotOptimizerRuntimeClasspath = aotOptimizerRuntimeClasspath;
-            this.aotApplication = aotApplication;
-            this.aotApplicationClasspath = aotApplicationClasspath;
-        }
+    private record Configurations(
+        Configuration aotOptimizerRuntimeClasspath,
+        Configuration aotApplication,
+        Configuration aotApplicationClasspath
+    ) {
     }
 }

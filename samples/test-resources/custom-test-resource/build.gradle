@@ -6,19 +6,17 @@ plugins {
 version = "0.1"
 group = "demo"
 
-repositories {
-    mavenCentral()
-}
-
 dependencies {
     annotationProcessor("io.micronaut:micronaut-http-validation")
     implementation("io.micronaut:micronaut-http-client")
     implementation("io.micronaut:micronaut-jackson-databind")
     implementation("io.micronaut:micronaut-runtime")
     implementation("jakarta.annotation:jakarta.annotation-api")
+    implementation("io.micronaut.validation:micronaut-validation")
     runtimeOnly("ch.qos.logback:logback-classic")
-    implementation("io.micronaut:micronaut-validation")
-    testResourcesImplementation("org.apache.commons:commons-lang3:3.12.0")
+    runtimeOnly("io.micronaut:micronaut-jackson-databind")
+    runtimeOnly("org.yaml:snakeyaml")
+    testResourcesImplementation("org.apache.commons:commons-lang3:3.17.0")
 }
 
 application {
@@ -26,7 +24,6 @@ application {
 }
 
 micronaut {
-    version = "3.5.1"
     runtime("netty")
     testRuntime("junit5")
     processing {

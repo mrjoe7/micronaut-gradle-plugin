@@ -33,6 +33,9 @@ import static com.github.jengelman.gradle.plugins.shadow.ShadowJavaPlugin.SHADOW
  */
 class AotShadowSupport {
 
+    private AotShadowSupport() {
+    }
+
     static void registerShadowJar(Project project,
                                   ArchiveOperations archiveOperations,
                                   TaskContainer tasks,
@@ -46,7 +49,7 @@ class AotShadowSupport {
                 Jar mainJar = tasks.named("jar", Jar.class).get();
                 shadow.getManifest().inheritFrom(mainJar.getManifest());
                 if (javaApplication != null) {
-                    // This is the reason why we use an afterEvalute:
+                    // This is the reason why we use an afterEvaluate:
                     // The shadow plugin apparently does something with attributes,
                     // breaking support for providers
                     shadow.getManifest().getAttributes().put("Main-Class", javaApplication.getMainClass().get());

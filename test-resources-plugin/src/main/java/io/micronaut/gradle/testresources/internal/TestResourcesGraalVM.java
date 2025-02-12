@@ -15,11 +15,12 @@
  */
 package io.micronaut.gradle.testresources.internal;
 
-import io.micronaut.gradle.testresources.MicronautTestResourcesPlugin;
+import io.micronaut.gradle.testresources.ServerConnectionParametersProvider;
 import io.micronaut.gradle.testresources.StartTestResourcesService;
 import org.graalvm.buildtools.gradle.dsl.GraalVMExtension;
 import org.gradle.api.Project;
 import org.gradle.api.artifacts.Configuration;
+import org.gradle.api.provider.ProviderFactory;
 import org.gradle.api.tasks.TaskProvider;
 
 /**
@@ -28,16 +29,37 @@ import org.gradle.api.tasks.TaskProvider;
  * issues.
  */
 public final class TestResourcesGraalVM {
+
+    public static final String ENABLED_PROPERTY_NAME = "testresources.native";
+
+    private TestResourcesGraalVM() {
+    }
+
     public static void configure(Project project,
-                                 Configuration testResourcesClasspathConfig,
+                                 Configuration client,
                                  TaskProvider<StartTestResourcesService> internalStart) {
         GraalVMExtension graalVMExtension = project.getExtensions().findByType(GraalVMExtension.class);
-        graalVMExtension.getBinaries().all(b -> {
-            b.getClasspath().from(testResourcesClasspathConfig);
-            b.getRuntimeArgs().addAll(internalStart.map(task -> {
-                MicronautTestResourcesPlugin.ServerConnectionParametersProvider provider = new MicronautTestResourcesPlugin.ServerConnectionParametersProvider(internalStart);
-                return provider.asArguments();
-            }));
-        });
+        graalVMExtension.getBinaries().all(b -> b.getRuntimeArgs().addAll(internalStart.map(task -> {
+            ServerConnectionParametersProvider provider = new ServerConnectionParametersProvider(task.getSettingsDirectory());
+            return provider.asArguments();
+        })));
+        ProviderFactory providers = project.getProviders();
+        boolean includeClient = Boolean.TRUE.equals(providers
+                .systemProperty(ENABLED_PROPERTY_NAME)
+                .orElse(providers.gradleProperty(ENABLED_PROPERTY_NAME))
+                .map(s -> {
+                    if (s.isEmpty() || "true".equalsIgnoreCase(s)) {
+                        // if the property is set without value, consider it's true
+                        return "true";
+                    }
+                    return "false";
+                })
+                .orElse("false")
+                .map(Boolean::parseBoolean)
+                .getOrElse(false));
+        if (includeClient) {
+            Configuration runtimeClasspath = project.getConfigurations().getByName("runtimeOnly");
+            runtimeClasspath.extendsFrom(client);
+        }
     }
 }

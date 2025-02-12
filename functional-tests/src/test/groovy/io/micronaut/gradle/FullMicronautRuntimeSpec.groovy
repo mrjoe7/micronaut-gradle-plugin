@@ -13,20 +13,16 @@ class FullMicronautRuntimeSpec extends AbstractEagerConfiguringFunctionalTest {
         buildFile << """
             plugins {
                 id "io.micronaut.application"
-                id("com.github.johnrengelman.shadow") version("7.1.1")
+                id("com.github.johnrengelman.shadow") version("$shadowVersion")
             }
             
             micronaut {
-                version "3.5.1"
+                version "$micronautVersion"
                 runtime "$runtime"
                 testRuntime "junit5"
             }
             
             $repositoriesBlock
-            
-            repositories {
-                maven { url "https://s01.oss.sonatype.org/content/repositories/snapshots" }
-            }
             
             dependencies {
                 runtimeOnly("ch.qos.logback:logback-classic")
@@ -88,6 +84,6 @@ public class FooControllerTest {
         task.outcome == TaskOutcome.SUCCESS
 
         where:
-        runtime << ["netty", "lambda", "jetty", "oracle_function", "tomcat", "google_function"]
+        runtime << ["netty", "lambda_java", "lambda_provided", "jetty", "oracle_function", "tomcat", "google_function", "http_poja"]
     }
 }

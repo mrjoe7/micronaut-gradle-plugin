@@ -9,6 +9,7 @@ import io.micronaut.gradle.PluginsHelper;
 import io.micronaut.gradle.testresources.internal.TestResourcesAOT;
 import io.micronaut.gradle.testresources.internal.TestResourcesGraalVM;
 import io.micronaut.testresources.buildtools.MavenDependency;
+import io.micronaut.testresources.buildtools.ModuleIdentifier;
 import io.micronaut.testresources.buildtools.ServerUtils;
 import io.micronaut.testresources.buildtools.TestResourcesClasspath;
 import io.micronaut.testresources.buildtools.VersionInfo;
@@ -18,21 +19,21 @@ import org.gradle.api.Plugin;
 import org.gradle.api.Project;
 import org.gradle.api.Task;
 import org.gradle.api.artifacts.Configuration;
+import org.gradle.api.artifacts.ConfigurationContainer;
 import org.gradle.api.artifacts.Dependency;
 import org.gradle.api.artifacts.ModuleDependency;
+import org.gradle.api.artifacts.component.ModuleComponentIdentifier;
 import org.gradle.api.artifacts.dsl.DependencyHandler;
-import org.gradle.api.attributes.Bundling;
-import org.gradle.api.attributes.LibraryElements;
 import org.gradle.api.attributes.Usage;
 import org.gradle.api.file.Directory;
 import org.gradle.api.file.DirectoryProperty;
 import org.gradle.api.internal.project.ProjectInternal;
-import org.gradle.api.model.ObjectFactory;
 import org.gradle.api.plugins.JavaPlugin;
 import org.gradle.api.plugins.JavaPluginExtension;
 import org.gradle.api.plugins.PluginManager;
 import org.gradle.api.provider.Provider;
 import org.gradle.api.provider.ProviderFactory;
+import org.gradle.api.tasks.ClasspathNormalizer;
 import org.gradle.api.tasks.JavaExec;
 import org.gradle.api.tasks.SourceSet;
 import org.gradle.api.tasks.TaskContainer;
@@ -41,30 +42,22 @@ import org.gradle.api.tasks.testing.Test;
 import org.gradle.internal.event.ListenerManager;
 import org.gradle.internal.service.ServiceRegistry;
 import org.gradle.internal.session.BuildSessionLifecycleListener;
-import org.gradle.process.CommandLineArgumentProvider;
 import org.gradle.process.JavaForkOptions;
 
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.UncheckedIOException;
 import java.lang.reflect.Field;
-import java.math.BigInteger;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
-import java.util.Properties;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import static io.micronaut.gradle.MicronautComponentPlugin.MICRONAUT_BOMS_CONFIGURATION;
 import static java.util.stream.Stream.concat;
 
 /**
@@ -86,25 +79,25 @@ public class MicronautTestResourcesPlugin implements Plugin<Project> {
     // Intellij creates synthetic run tasks which name ends with this suffix
     private static final String IDEA_RUN_TASK_SUFFIX = ".main()";
 
-    public static void addTestResourcesClientDependencies(Project project, TestResourcesConfiguration config, DependencyHandler dependencies, TaskProvider<StartTestResourcesService> writeTestProperties, Configuration conf) {
+    private static Configuration createTestResourcesClientConfiguration(Project project,
+                                                                        TestResourcesConfiguration config) {
+        Configuration client = project.getConfigurations().create("testResourcesClient", conf -> {
+            conf.setCanBeConsumed(false);
+            conf.setCanBeResolved(false);
+            conf.setDescription("The Micronaut Test Resources client dependencies");
+        });
+        DependencyHandler dependencies = project.getDependencies();
         // Would be cleaner to use `config.getEnabled().zip(...)` but for some unclear reason it fails
-        conf.getDependencies().addAllLater(config.getVersion().map(v -> {
+        client.getDependencies().addAllLater(config.getVersion().map(v -> {
             if (Boolean.TRUE.equals(config.getEnabled().get())) {
                 return Collections.singleton(dependencies.create("io.micronaut.testresources:micronaut-test-resources-client:" + v));
             }
             return Collections.emptyList();
         }));
-
-        conf.getDependencyConstraints().addAllLater(PluginsHelper.findMicronautVersionAsProvider(project).map(v ->
-                Stream.of("micronaut-http-client", "micronaut-bom", "micronaut-inject")
-                        .map(artifact -> dependencies.getConstraints().create("io.micronaut:" + artifact, dc -> {
-                            dc.because("Aligning version of Micronaut the current Micronaut version");
-                            dc.version(version -> version.strictly(v));
-                        }))
-                        .toList()
-        ));
+        return client;
     }
 
+    @Override
     public void apply(Project project) {
         PluginManager pluginManager = project.getPluginManager();
         pluginManager.apply(JavaPlugin.class);
@@ -118,25 +111,18 @@ public class MicronautTestResourcesPlugin implements Plugin<Project> {
         ProviderFactory providers = project.getProviders();
         Provider<Integer> explicitPort = providers.systemProperty("micronaut.test-resources.server.port").map(Integer::parseInt);
         TestResourcesConfiguration config = createTestResourcesConfiguration(project, explicitPort);
-        JavaPluginExtension javaPluginExtension = project.getExtensions().getByType(JavaPluginExtension.class);
+        JavaPluginExtension javaPluginExtension = PluginsHelper.javaPluginExtensionOf(project);
         SourceSet testResourcesSourceSet = createTestResourcesSourceSet(javaPluginExtension);
         DependencyHandler dependencies = project.getDependencies();
+        Configuration testResourcesCompileOnly = project.getConfigurations().getByName(testResourcesSourceSet.getCompileOnlyConfigurationName());
         Configuration testResourcesApi = project.getConfigurations().getByName(testResourcesSourceSet.getImplementationConfigurationName());
+        testResourcesCompileOnly.getDependencies().addLater(config.getVersion().map(v -> dependencies.create("io.micronaut.testresources:micronaut-test-resources-server:" + v)));
         testResourcesApi.getDependencies().addLater(config.getVersion().map(v -> dependencies.create("io.micronaut.testresources:micronaut-test-resources-core:" + v)));
         server.getDependencies().addAllLater(buildTestResourcesDependencyList(project, dependencies, config, testResourcesSourceSet));
         String accessToken = UUID.randomUUID().toString();
         Provider<String> accessTokenProvider = providers.provider(() -> accessToken);
         DirectoryProperty buildDirectory = project.getLayout().getBuildDirectory();
-        MessageDigest md;
-        try {
-            md = MessageDigest.getInstance("SHA-1");
-        } catch (NoSuchAlgorithmException e) {
-            throw new RuntimeException(e);
-        }
-        md.update(project.getPath().getBytes(StandardCharsets.UTF_8));
-        // convert the digest to hex string
-        String hash = String.format("%040x", new BigInteger(1, md.digest()));
-        File testResourcesDir = new File(project.getRootDir(), ".gradle/test-resources/" + hash);
+        File testResourcesDir = new File(project.getProjectDir(), ".micronaut/test-resources");
         Provider<Directory> settingsDirectory = config.getSharedServer().flatMap(shared -> {
             DirectoryProperty directoryProperty = project.getObjects().directoryProperty();
             if (Boolean.TRUE.equals(shared)) {
@@ -165,26 +151,37 @@ public class MicronautTestResourcesPlugin implements Plugin<Project> {
             task.setDescription("Starts the test resources server in standalone mode");
         });
         createStopServiceTask(settingsDirectory, tasks);
-        project.afterEvaluate(p -> p.getConfigurations().all(conf -> configureDependencies(project, config, dependencies, internalStart, conf)));
+        Configuration client = createTestResourcesClientConfiguration(project, config);
+        project.afterEvaluate(p -> p.getConfigurations().all(conf -> configureDependencies(conf, client)));
         outgoing.getOutgoing().artifact(internalStart);
-        outgoing.getDependencies().addLater(config.getVersion().map(v -> dependencies.create("io.micronaut.testresources:micronaut-test-resources-client:" + v)));
-        Configuration testResourcesClasspathConfig = createTestResourcesClasspathConfig(project, config, internalStart);
+        outgoing.extendsFrom(client);
         PluginManager pluginManager = project.getPluginManager();
-        pluginManager.withPlugin("org.graalvm.buildtools.native", unused -> TestResourcesGraalVM.configure(project, testResourcesClasspathConfig, internalStart));
-        pluginManager.withPlugin("io.micronaut.aot", unused -> TestResourcesAOT.configure(project, config, dependencies, tasks, internalStart, testResourcesClasspathConfig));
+        pluginManager.withPlugin("org.graalvm.buildtools.native", unused -> TestResourcesGraalVM.configure(project, client, internalStart));
+        pluginManager.withPlugin("io.micronaut.aot", unused -> TestResourcesAOT.configure(project, client));
         configureServiceReset((ProjectInternal) project, settingsDirectory, stopAtEndFile);
 
-        tasks.withType(Test.class).configureEach(task -> configureServerConnection(internalStart, task));
-        tasks.withType(JavaExec.class).configureEach(task -> configureServerConnection(internalStart, task));
+        tasks.withType(Test.class).configureEach(task -> configureServerConnection(internalStart, task, config, testResourcesSourceSet));
+        tasks.withType(JavaExec.class).configureEach(task -> configureServerConnection(internalStart, task, config, testResourcesSourceSet));
 
         workaroundForIntellij(project);
 
     }
 
-    private static void configureServerConnection(TaskProvider<StartTestResourcesService> internalStart, Task task) {
+
+    private static void configureServerConnection(TaskProvider<StartTestResourcesService> internalStart,
+                                                  Task task,
+                                                  TestResourcesConfiguration configuration,
+                                                  SourceSet testResourcesSourceSet) {
         task.dependsOn(internalStart);
-        if (task instanceof JavaForkOptions) {
-            ((JavaForkOptions) task).getJvmArgumentProviders().add(new ServerConnectionParametersProvider(internalStart));
+        task.getInputs().files(configuration.getEnabled().map(enabled -> {
+            if (enabled) {
+                return testResourcesSourceSet.getRuntimeClasspath();
+            }
+            return Collections.emptyList();
+        })).withPropertyName("inputTestResourcesRuntimeClasspath").withNormalizer(ClasspathNormalizer.class);
+        var settingsDirectory = internalStart.flatMap(StartTestResourcesService::getSettingsDirectory);
+        if (task instanceof JavaForkOptions jfo) {
+            jfo.getJvmArgumentProviders().add(new ServerConnectionParametersProvider(settingsDirectory));
         }
     }
 
@@ -199,20 +196,6 @@ public class MicronautTestResourcesPlugin implements Plugin<Project> {
                     }
                 })
         );
-    }
-
-    private Configuration createTestResourcesClasspathConfig(Project project, TestResourcesConfiguration config, TaskProvider<StartTestResourcesService> startTestResourcesServiceTaskProvider) {
-        return project.getConfigurations().create("testResourcesClasspath", conf -> {
-            conf.setCanBeResolved(true);
-            conf.setCanBeConsumed(false);
-            conf.attributes(attrs -> {
-                ObjectFactory objects = project.getObjects();
-                attrs.attribute(Usage.USAGE_ATTRIBUTE, objects.named(Usage.class, Usage.JAVA_RUNTIME));
-                attrs.attribute(Bundling.BUNDLING_ATTRIBUTE, objects.named(Bundling.class, Bundling.EXTERNAL));
-                attrs.attribute(LibraryElements.LIBRARY_ELEMENTS_ATTRIBUTE, objects.named(LibraryElements.class, LibraryElements.CLASSES_AND_RESOURCES));
-            });
-            addTestResourcesClientDependencies(project, config, project.getDependencies(), startTestResourcesServiceTaskProvider, conf);
-        });
     }
 
     private Path createStopFile(Project project) {
@@ -241,10 +224,10 @@ public class MicronautTestResourcesPlugin implements Plugin<Project> {
         tasks.register(STOP_TEST_RESOURCES_SERVICE, StopTestResourcesService.class, task -> task.getSettingsDirectory().convention(settingsDirectory));
     }
 
-    private void configureDependencies(Project project, TestResourcesConfiguration config, DependencyHandler dependencies, TaskProvider<StartTestResourcesService> writeTestProperties, Configuration conf) {
+    private void configureDependencies(Configuration conf, Configuration client) {
         String name = conf.getName();
         if ("developmentOnly".equals(name) || "testRuntimeOnly".equals(name)) {
-            addTestResourcesClientDependencies(project, config, dependencies, writeTestProperties, conf);
+            conf.extendsFrom(client);
         }
     }
 
@@ -264,12 +247,26 @@ public class MicronautTestResourcesPlugin implements Plugin<Project> {
             task.getAccessToken().convention(accessToken);
             task.getExplicitPort().convention(config.getExplicitPort());
             task.getClientTimeout().convention(config.getClientTimeout());
-            task.getClasspath().from(server);
+            task.getServerIdleTimeoutMinutes().convention(config.getServerIdleTimeoutMinutes());
+            task.getClasspath().from(server.getIncoming().artifactView(view -> {
+                view.componentFilter(id -> {
+                    if (id instanceof ModuleComponentIdentifier mci) {
+                        return TestResourcesClasspath.isDependencyAllowedOnServerClasspath(new ModuleIdentifier(
+                            mci.getGroup(),
+                            mci.getModule()
+                        ));
+                    }
+                    return true;
+                });
+            }).getFiles());
             task.getForeground().convention(false);
             task.getStopFile().set(stopFile.toFile());
             task.getStandalone().set(isStandalone);
             task.getClassDataSharingDir().convention(cdsDir);
             task.getUseClassDataSharing().convention(JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_17));
+            task.getSystemProperties().convention(config.getServerSystemProperties());
+            task.getEnvironment().convention(config.getServerEnvironment());
+            task.getDebugServer().convention(config.getDebugServer());
         });
     }
 
@@ -277,11 +274,7 @@ public class MicronautTestResourcesPlugin implements Plugin<Project> {
         MicronautExtension micronautExtension = PluginsHelper.findMicronautExtension(project);
         TestResourcesConfiguration testResources = micronautExtension.getExtensions().create("testResources", TestResourcesConfiguration.class);
         ProviderFactory providers = project.getProviders();
-        testResources.getEnabled().convention(
-                micronautExtension.getVersion()
-                        .orElse(providers.gradleProperty("micronautVersion"))
-                        .map(MicronautTestResourcesPlugin::isAtLeastMicronaut3dot5)
-        );
+        testResources.getEnabled().convention(true);
         testResources.getVersion().convention(VersionInfo.getVersion());
         testResources.getExplicitPort().convention(explicitPort);
         testResources.getInferClasspath().convention(true);
@@ -300,19 +293,6 @@ public class MicronautTestResourcesPlugin implements Plugin<Project> {
         );
         testResources.getSharedServerNamespace().convention(providers.environmentVariable("SHARED_TEST_RESOURCES_NAMESPACE"));
         return testResources;
-    }
-
-    private static boolean isAtLeastMicronaut3dot5(String v) {
-        String[] parts = v.split("\\.");
-        if (parts.length >= 2) {
-            int major = Integer.parseInt(parts[0]);
-            int minor = Integer.parseInt(parts[1]);
-            if (major > 3 || (major == 3 && minor >= 5)) {
-                return true;
-            }
-            return false;
-        }
-        return false;
     }
 
     private Provider<List<Dependency>> buildTestResourcesDependencyList(Project project, DependencyHandler dependencies, TestResourcesConfiguration config, SourceSet testResourcesSourceSet) {
@@ -363,10 +343,15 @@ public class MicronautTestResourcesPlugin implements Plugin<Project> {
         }
     }
 
-    private static ArrayList<Integer> parseVersion(String testedVersion) {
-        return Arrays.stream(testedVersion.split("\\."))
+    static ArrayList<Integer> parseVersion(String testedVersion) {
+        String version = testedVersion;
+        var index = version.indexOf('-');
+        if (index > 0) {
+            version = version.substring(0, index);
+        }
+        return Arrays.stream(version.split("\\."))
                 .map(String::trim)
-                .map(s -> s.replaceAll("[^0-9]", ""))
+                .map(s -> s.replaceAll("\\D", ""))
                 .map(Integer::parseInt)
                 .collect(Collectors.toCollection(ArrayList::new));
     }
@@ -387,7 +372,9 @@ public class MicronautTestResourcesPlugin implements Plugin<Project> {
                 public void beforeComplete() {
                     try {
                         if (Files.exists(shouldStopFile)) {
-                            project.getLogger().debug("Stop file contains " + Files.readAllLines(shouldStopFile));
+                            if (project.getLogger().isDebugEnabled()) {
+                                project.getLogger().debug("Stop file contains {}", Files.readAllLines(shouldStopFile));
+                            }
                             if (Boolean.parseBoolean(Files.readAllLines(shouldStopFile).get(0))) {
                                 ServerUtils.stopServer(settingsDirectory.get().getAsFile().toPath());
                             }
@@ -403,14 +390,11 @@ public class MicronautTestResourcesPlugin implements Plugin<Project> {
     }
 
     private static Configuration createTestResourcesServerConfiguration(Project project) {
-        // Legacy configuration was only used in 3.5.0 so it's relatively safe
-        Configuration legacyConf = project.getConfigurations().create("testresources", conf -> {
-            conf.setCanBeConsumed(false);
-            conf.setCanBeResolved(false);
-            conf.setDescription("[deprecated] Please use " + MicronautTestResourcesPlugin.TESTRESOURCES_CONFIGURATION + " instead.");
-        });
-        return project.getConfigurations().create(TESTRESOURCES_CONFIGURATION, conf -> {
-            conf.extendsFrom(legacyConf);
+        ConfigurationContainer configurations = project.getConfigurations();
+        Configuration boms = configurations.findByName(MICRONAUT_BOMS_CONFIGURATION);
+        PluginsHelper.maybeAddMicronautPlaformBom(project, boms);
+        return configurations.create(TESTRESOURCES_CONFIGURATION, conf -> {
+            conf.extendsFrom(boms);
             conf.setDescription("Dependencies for the Micronaut test resources service");
             conf.setCanBeConsumed(false);
             conf.setCanBeResolved(true);
@@ -426,29 +410,4 @@ public class MicronautTestResourcesPlugin implements Plugin<Project> {
         });
     }
 
-    public static class ServerConnectionParametersProvider implements CommandLineArgumentProvider {
-        private final TaskProvider<StartTestResourcesService> internalStart;
-
-        public ServerConnectionParametersProvider(TaskProvider<StartTestResourcesService> internalStart) {
-            this.internalStart = internalStart;
-        }
-
-        @Override
-        public Iterable<String> asArguments() {
-            Properties props = new Properties();
-            File serverConfig = new File(internalStart.get().getSettingsDirectory().get().getAsFile(), "test-resources.properties");
-            if (serverConfig.exists()) {
-                try (InputStream in = new FileInputStream(serverConfig)) {
-                    props.load(in);
-                } catch (IOException e) {
-                    throw new UncheckedIOException(e);
-                }
-                return props.keySet()
-                        .stream()
-                        .map(key -> "-Dmicronaut.test.resources." + key + "=" + props.getProperty(key.toString()))
-                        .collect(Collectors.toList());
-            }
-            return Collections.emptyList();
-        }
-    }
 }

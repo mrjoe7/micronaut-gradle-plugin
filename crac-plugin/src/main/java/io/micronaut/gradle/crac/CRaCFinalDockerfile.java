@@ -3,11 +3,19 @@ package io.micronaut.gradle.crac;
 import io.micronaut.gradle.docker.DockerBuildStrategy;
 import io.micronaut.gradle.docker.MicronautDockerfile;
 import org.gradle.api.GradleException;
+import org.gradle.api.file.RegularFileProperty;
 import org.gradle.api.provider.Property;
 import org.gradle.api.tasks.CacheableTask;
 import org.gradle.api.tasks.Input;
+import org.gradle.api.tasks.InputFile;
 import org.gradle.api.tasks.Optional;
+import org.gradle.api.tasks.PathSensitive;
+import org.gradle.api.tasks.PathSensitivity;
+import org.gradle.api.tasks.TaskAction;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -20,11 +28,36 @@ public abstract class CRaCFinalDockerfile extends MicronautDockerfile {
     @Optional
     public abstract Property<String> getPlatform();
 
+    @InputFile
+    @PathSensitive(PathSensitivity.RELATIVE)
+    @Optional
+    public abstract RegularFileProperty getCustomFinalDockerfile();
+
     public static final String DEFAULT_WORKING_DIR = "/home/app";
 
     @SuppressWarnings("java:S5993") // Gradle API
     public CRaCFinalDockerfile() {
         setDescription("Builds a Docker File for a CRaC checkpointed Micronaut application");
+    }
+
+    @TaskAction
+    @Override
+    public void create() throws IOException {
+        if (getCustomFinalDockerfile().isPresent()) {
+            Path source = getCustomFinalDockerfile().get().getAsFile().toPath();
+            try {
+                Files.copy(
+                        source,
+                        getDestFile().get().getAsFile().toPath()
+                );
+                getProject().getLogger().lifecycle("Dockerfile copied from {} to {}", source, getDestFile().get().getAsFile().getAbsolutePath());
+                return;
+            } catch (IOException e) {
+                throw new GradleException("Error copying custom final Dockerfile", e);
+            }
+        }
+        super.create();
+        getProject().getLogger().lifecycle("Dockerfile written to: {}", getDestFile().get().getAsFile().getAbsolutePath());
     }
 
     @Override
@@ -59,17 +92,16 @@ public abstract class CRaCFinalDockerfile extends MicronautDockerfile {
         String workDir = DEFAULT_WORKING_DIR;
         workingDir(workDir);
         instruction("# Add required libraries");
-        runCommand("apt-get update && apt-get install -y \\\n" +
-                "        libnl-3-200 \\\n" +
-                "    && rm -rf /var/lib/apt/lists/*");
+        runCommand("""
+            apt-get update && apt-get install -y \\
+                    libnl-3-200 \\
+                && rm -rf /var/lib/apt/lists/*
+            """);
         instruction("# Copy CRaC JDK from the checkpoint image (to save a download)");
         copyFile("--from=" + createCheckpointImageName(getProject()) + " /azul-crac-jdk", "/azul-crac-jdk");
         instruction("# Copy layers");
         copyFile("cr", workDir + "/cr");
-        copyFile("layers/libs", workDir + "/libs");
-        copyFile("layers/classes", workDir + "/classes");
-        copyFile("layers/resources", workDir + "/resources");
-        copyFile("layers/application.jar", workDir + "/application.jar");
+        MicronautDockerfile.setupResources(this, getLayers().get(), workDir);
         copyFile("scripts/run.sh", workDir + "/run.sh");
     }
 }

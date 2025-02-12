@@ -4,6 +4,7 @@ import org.gradle.api.Action;
 import org.gradle.api.model.ObjectFactory;
 import org.gradle.api.plugins.ExtensionAware;
 import org.gradle.api.provider.Property;
+import org.gradle.api.provider.SetProperty;
 
 import javax.inject.Inject;
 import java.util.LinkedHashMap;
@@ -25,9 +26,28 @@ public abstract class MicronautExtension implements ExtensionAware {
     private final Property<MicronautRuntime> runtime;
     private final Property<MicronautTestRuntime> testRuntime;
 
+    /**
+     * If set to false, then the Micronaut Gradle plugins will not automatically
+     * add the Micronaut Platform BOM to your dependencies. It becomes your
+     * responsibility to add it directly, or to provide explicit versions for
+     * Micronaut modules.
+     * @return the import platform flag. Defaults to true.
+     */
+    public abstract Property<Boolean> getImportMicronautPlatform();
+
+    /**
+     * The Micronaut plugins can automatically add dependencies to your project.
+     * If, for some reason, a dependency shouldn't be automatically added, you can
+     * add its coordinates to this set. The format is "group:name". It must not include
+     * the version.
+     *
+     * @return the set of ignored automatic dependencies, as group:name strings.
+     */
+    public abstract SetProperty<String> getIgnoredAutomaticDependencies();
+
     @Inject
-    public MicronautExtension(ObjectFactory objectFactory) {
-        this.processing = objectFactory.newInstance(AnnotationProcessing.class);
+    public MicronautExtension(ObjectFactory objectFactory, SourceSetConfigurer sourceSetConfigurer) {
+        this.processing = objectFactory.newInstance(AnnotationProcessing.class, sourceSetConfigurer);
         this.version = objectFactory.property(String.class);
         this.enableNativeImage = objectFactory.property(Boolean.class)
                                     .convention(true);
@@ -35,6 +55,7 @@ public abstract class MicronautExtension implements ExtensionAware {
                                     .convention(MicronautRuntime.NONE);
         this.testRuntime = objectFactory.property(MicronautTestRuntime.class)
                                         .convention(MicronautTestRuntime.NONE);
+        getImportMicronautPlatform().convention(true);
     }
 
     /**
@@ -160,7 +181,7 @@ public abstract class MicronautExtension implements ExtensionAware {
             throw new IllegalArgumentException("Number of arguments should be an even number representing the keys and values");
         }
 
-        Map<String, List<String>> answer = new LinkedHashMap<>(len / 2);
+        var answer = new LinkedHashMap<String, List<String>>(len / 2);
         int i = 0;
         while (i < values.length - 1) {
             answer.put(values[i++].toString(), (List<String>) values[i++]);

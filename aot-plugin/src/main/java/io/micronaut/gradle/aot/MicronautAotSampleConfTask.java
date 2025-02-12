@@ -31,9 +31,9 @@ public abstract class MicronautAotSampleConfTask extends AbstractMicronautAotCli
 
     @Override
     protected void onSuccess(File outputDir) {
-        File sampleFile = new File(outputDir, getTargetRuntime().map(runtime -> runtime.getSimpleName() + ".properties").orElse("sample.properties").get());
+        var sampleFile = new File(outputDir, getTargetRuntime().map(runtime -> runtime.getSimpleName() + ".properties").orElse("sample.properties").get());
         if (sampleFile.exists()) {
-            System.out.println("Sample configuration file written to " + Strings.clickableUrl(sampleFile));
+            getLogger().lifecycle("Sample configuration file written to {}", Strings.clickableUrl(sampleFile));
         }
     }
 }

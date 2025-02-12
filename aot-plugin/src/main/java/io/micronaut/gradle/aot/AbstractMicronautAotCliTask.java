@@ -20,6 +20,7 @@ import org.gradle.api.GradleException;
 import org.gradle.api.file.ConfigurableFileCollection;
 import org.gradle.api.file.FileCollection;
 import org.gradle.api.internal.file.FileOperations;
+import org.gradle.api.provider.ListProperty;
 import org.gradle.api.provider.MapProperty;
 import org.gradle.api.provider.Property;
 import org.gradle.api.tasks.Classpath;
@@ -34,6 +35,7 @@ import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -50,14 +52,18 @@ abstract class AbstractMicronautAotCliTask extends DefaultTask implements Optimi
     protected abstract ExecOperations getExecOperations();
 
     @Input
-    protected abstract Property<Boolean> getDebug();
+    public abstract Property<Boolean> getDebug();
 
     @Input
-    protected abstract Property<String> getAotVersion();
+    public abstract Property<String> getAotVersion();
 
     @Input
     @Optional
-    protected abstract MapProperty<String, String> getEnvironmentVariables();
+    public abstract MapProperty<String, String> getEnvironmentVariables();
+
+    @Input
+    @Optional
+    public abstract ListProperty<String> getJvmArgs();
 
     protected AbstractMicronautAotCliTask() {
         getDebug().convention(false);
@@ -75,22 +81,22 @@ abstract class AbstractMicronautAotCliTask extends DefaultTask implements Optimi
     public final void execute() throws IOException {
         File outputDir = getOutputDirectory().getAsFile().get();
         getFileOperations().delete(outputDir);
-        File argFile = File.createTempFile("aot", "args");
+        File argFile = Files.createTempFile("aot", "args").toFile();
         try {
             ExecResult javaexec = getExecOperations().javaexec(spec -> {
                 FileCollection aotClasspath = getOptimizerClasspath();
                 FileCollection classpath = getOptimizerClasspath().plus(getClasspath());
                 spec.setClasspath(aotClasspath);
                 spec.getMainClass().set("io.micronaut.aot.cli.Main");
-                List<String> args = new ArrayList<>(Arrays.asList(
-                        "--classpath", classpath.getAsPath(),
-                        "--runtime", getTargetRuntime().get().name().toUpperCase(),
-                        "--package", getTargetPackage().get()
+                var args = new ArrayList<>(Arrays.asList(
+                    "--classpath", classpath.getAsPath(),
+                    "--runtime", getTargetRuntime().get().name().toUpperCase(),
+                    "--package", getTargetPackage().get()
                 ));
                 maybeAddOptimizerClasspath(args, getClasspath());
                 configureExtraArguments(args);
                 boolean useArgFile = true;
-                try (PrintWriter wrt = new PrintWriter(new FileWriter(argFile))) {
+                try (var wrt = new PrintWriter(new FileWriter(argFile))) {
                     args.forEach(arg -> wrt.println(escapeArg(arg)));
                 } catch (IOException e) {
                     useArgFile = false;
@@ -101,9 +107,16 @@ abstract class AbstractMicronautAotCliTask extends DefaultTask implements Optimi
                     spec.args(args);
                 }
                 getLogger().info("Running AOT optimizer {} with parameters: {}", useArgFile ? "using arg file" : "directly", args);
-                if (getDebug().get()) {
+                var jvmArgs = new ArrayList<String>();
+                if (Boolean.TRUE.equals(getDebug().get())) {
                     getLogger().info("Running with debug enabled");
-                    spec.jvmArgs("-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=5005");
+                    jvmArgs.add("-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=5005");
+                }
+                if (getJvmArgs().isPresent()) {
+                    jvmArgs.addAll(getJvmArgs().get());
+                }
+                if (!jvmArgs.isEmpty()) {
+                    spec.jvmArgs(jvmArgs);
                 }
                 if (getEnvironmentVariables().isPresent()) {
                     spec.environment(getEnvironmentVariables().get());
@@ -114,7 +127,7 @@ abstract class AbstractMicronautAotCliTask extends DefaultTask implements Optimi
             }
         } finally {
             onSuccess(outputDir);
-            argFile.delete();
+            Files.delete(argFile.toPath());
         }
     }
 

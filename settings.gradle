@@ -2,27 +2,31 @@ pluginManagement {
     repositories {
         mavenCentral()
         gradlePluginPortal()
+//        maven { url = uri("https://s01.oss.sonatype.org/content/repositories/snapshots/") }
     }
 }
 
 plugins {
-    id 'io.micronaut.build.shared.settings' version '6.1.1'
+    id 'io.micronaut.build.shared.settings' version '7.3.2'
 }
 
 rootProject.name = 'micronaut-gradle-plugin-parent'
 
+include("platform-catalog-plugin")
 include("minimal-plugin")
 include("crac-plugin")
 include("docker-plugin")
 include("graalvm-plugin")
 include("aot-plugin")
 include("gradle-plugin")
+include("openapi-plugin")
 include("test-resources-plugin")
 include("functional-tests")
+include("jsonschema-plugin")
 
-for (project in rootProject.children) {
-    if (project.name.contains('tests')) {
-        continue
-    }
-    project.name = "micronaut-${project.name}"
+enableFeaturePreview 'TYPESAFE_PROJECT_ACCESSORS'
+
+micronautBuild {
+    useStandardizedProjectNames = true
+    nonStandardProjectNamePrefixes.add("functional-tests")
 }

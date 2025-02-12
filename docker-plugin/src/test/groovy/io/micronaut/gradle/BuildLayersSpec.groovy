@@ -1,6 +1,5 @@
 package io.micronaut.gradle
 
-
 import org.gradle.testkit.runner.TaskOutcome
 
 class BuildLayersSpec extends AbstractGradleBuildSpec {
@@ -15,7 +14,7 @@ class BuildLayersSpec extends AbstractGradleBuildSpec {
             }
             
             micronaut {
-                version "3.5.1"
+                version "$micronautVersion"
                 runtime "netty"
                 testRuntime "junit5"
             }
@@ -52,7 +51,7 @@ class BuildLayersSpec extends AbstractGradleBuildSpec {
             }
             
             micronaut {
-                version "3.5.1"
+                version "$micronautVersion"
                 runtime "netty"
                 testRuntime "junit5"
             }
@@ -76,7 +75,7 @@ class BuildLayersSpec extends AbstractGradleBuildSpec {
                 from sourceSets.main.output
             }
 
-            configurations.runtimeClasspath.dependencies.add(dependencies.create(files(jar1, jar2)))            
+            configurations.runtimeOnly.dependencies.add(dependencies.create(files(jar1, jar2)))            
 
             tasks.withType(io.micronaut.gradle.docker.tasks.BuildLayersTask) {
                 duplicatesStrategy = DuplicatesStrategy.INCLUDE

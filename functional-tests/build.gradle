@@ -12,15 +12,17 @@ repositories {
 }
 
 functionalTesting {
+    pluginUnderTest('platform-catalog')
     pluginUnderTest('minimal')
     pluginUnderTest('graalvm')
     pluginUnderTest('docker')
     pluginUnderTest('aot')
     pluginUnderTest('gradle')
+    pluginUnderTest('openapi')
     pluginUnderTest('test-resources')
 }
 
 dependencies {
     testImplementation gradleTestKit()
-    testImplementation testFixtures(project(":micronaut-minimal-plugin"))
+    testImplementation testFixtures(projects.micronautMinimalPlugin)
 }

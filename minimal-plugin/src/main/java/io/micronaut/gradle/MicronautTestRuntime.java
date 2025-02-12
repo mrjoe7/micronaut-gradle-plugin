@@ -1,8 +1,11 @@
 package io.micronaut.gradle;
 
-import org.gradle.api.plugins.JavaPlugin;
+import java.util.Collections;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 
-import java.util.*;
+import org.gradle.api.plugins.JavaPlugin;
 
 /**
  * An enum with the different supported test runtimes.
@@ -16,10 +19,10 @@ public enum MicronautTestRuntime {
      */
     JUNIT_5(MicronautExtension.mapOf(
             JavaPlugin.TEST_IMPLEMENTATION_CONFIGURATION_NAME,
-            Arrays.asList("org.junit.jupiter:junit-jupiter-api", "io.micronaut.test:micronaut-test-junit5"),
+            List.of("org.junit.jupiter:junit-jupiter-api", "io.micronaut.test:micronaut-test-junit5"),
             JavaPlugin.TEST_RUNTIME_ONLY_CONFIGURATION_NAME,
             Collections.singletonList("org.junit.jupiter:junit-jupiter-engine")
-    )),
+    ), true),
     /**
      * Spock 2.
      */
@@ -27,56 +30,59 @@ public enum MicronautTestRuntime {
             JavaPlugin.TEST_COMPILE_ONLY_CONFIGURATION_NAME,
             Collections.singletonList("io.micronaut:micronaut-inject-groovy"),
             JavaPlugin.TEST_IMPLEMENTATION_CONFIGURATION_NAME,
-            Arrays.asList(
+            List.of(
                     "org.spockframework:spock-core",
                     "io.micronaut.test:micronaut-test-spock",
-                    "org.codehaus.groovy:groovy"
+                    "org.apache.groovy:groovy"
             )
-    )),
+    ), true),
     /**
      * Kotest 4.
      */
     KOTEST_4(MicronautExtension.mapOf(
-            "kaptTest",
+            MicronautKotlinSupport.KOTLIN_PROCESSORS,
             Collections.singletonList("io.micronaut:micronaut-inject-java"),
             JavaPlugin.TEST_IMPLEMENTATION_CONFIGURATION_NAME,
-            Arrays.asList(
+            List.of(
                     "io.mockk:mockk",
                     "io.micronaut.test:micronaut-test-kotest",
                     "io.kotest:kotest-assertions-core-jvm"
             ),
             JavaPlugin.TEST_RUNTIME_ONLY_CONFIGURATION_NAME,
             Collections.singletonList("io.kotest:kotest-runner-junit5-jvm")
-    )),
+    ), true),
 
     /**
      * Kotest 5.
      */
     KOTEST_5(MicronautExtension.mapOf(
-            "kaptTest",
+            MicronautKotlinSupport.KOTLIN_PROCESSORS,
             Collections.singletonList("io.micronaut:micronaut-inject-java"),
             JavaPlugin.TEST_IMPLEMENTATION_CONFIGURATION_NAME,
-            Arrays.asList(
+            List.of(
                     "io.mockk:mockk",
                     "io.micronaut.test:micronaut-test-kotest5",
                     "io.kotest:kotest-assertions-core-jvm"
             ),
             JavaPlugin.TEST_RUNTIME_ONLY_CONFIGURATION_NAME,
             Collections.singletonList("io.kotest:kotest-runner-junit5-jvm")
-    )),
+    ), true),
     /**
      * No test runtime.
      */
     NONE;
 
     private final Map<String, List<String>> implementation;
+    private final boolean usesJunitPlatform;
 
-    MicronautTestRuntime(String... dependencies) {
-        this.implementation = Collections.singletonMap(JavaPlugin.IMPLEMENTATION_CONFIGURATION_NAME, Arrays.asList(dependencies));
+    MicronautTestRuntime() {
+        this.implementation = Collections.singletonMap(JavaPlugin.IMPLEMENTATION_CONFIGURATION_NAME, Collections.emptyList());
+        this.usesJunitPlatform = false;
     }
 
-    MicronautTestRuntime(Map<String, List<String>> implementation) {
+    MicronautTestRuntime(Map<String, List<String>> implementation, boolean usesJunitPlatform) {
         this.implementation = implementation;
+        this.usesJunitPlatform = usesJunitPlatform;
     }
 
     public Map<String, List<String>> getDependencies() {
@@ -87,23 +93,24 @@ public enum MicronautTestRuntime {
         if (str != null) {
             str = str.toUpperCase(Locale.ENGLISH);
             switch (str) {
-                case "JUNIT":
-                case "JUNIT5":
-                case "JUNIT_5":
+                case "JUNIT", "JUNIT5", "JUNIT_5" -> {
                     return MicronautTestRuntime.JUNIT_5;
-                case "SPOCK":
-                case "SPOCK2":
-                case "SPOCK_2":
+                }
+                case "SPOCK", "SPOCK2", "SPOCK_2" -> {
                     return MicronautTestRuntime.SPOCK_2;
-                case "KOTEST":
-                case "KOTEST4":
-                case "KOTEST_4":
+                }
+                case "KOTEST", "KOTEST4", "KOTEST_4" -> {
                     return MicronautTestRuntime.KOTEST_4;
-                case "KOTEST5":
-                case "KOTEST_5":
+                }
+                case "KOTEST5", "KOTEST_5" -> {
                     return MicronautTestRuntime.KOTEST_5;
+                }
             }
         }
         return MicronautTestRuntime.NONE;
+    }
+
+    public boolean isUsingJunitPlatform() {
+        return usesJunitPlatform;
     }
 }

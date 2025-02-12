@@ -19,11 +19,11 @@ class RuntimeDependenciesSpec extends AbstractEagerConfiguringFunctionalTest {
         buildFile << """
             plugins {
                 id "io.micronaut.minimal.application"
-                id("com.github.johnrengelman.shadow") version("$SHADE_VERSION")
+                id("com.github.johnrengelman.shadow") version("$shadowVersion")
             }
             
             micronaut {
-                version "$MICRONAUT_VERSION"
+                version "$micronautVersion"
                 runtime "$runtime"                
             }
             
@@ -55,12 +55,11 @@ class RuntimeDependenciesSpec extends AbstractEagerConfiguringFunctionalTest {
         'lambda_java'          | 'compileClasspath'     || ["io.micronaut.aws:micronaut-function-aws-api-proxy"]
         'lambda_java'          | 'developmentOnly'      || ["io.micronaut.aws:micronaut-function-aws-api-proxy-test"]
         'lambda_java'          | 'testRuntimeClasspath' || ["io.micronaut.aws:micronaut-function-aws-api-proxy-test"]
-        'lambda'               | 'compileClasspath'     || ["io.micronaut.aws:micronaut-function-aws-api-proxy", "io.micronaut.aws:micronaut-function-aws-custom-runtime"]
-        'lambda'               | 'developmentOnly'      || ["io.micronaut.aws:micronaut-function-aws-api-proxy-test"]
-        'lambda'               | 'testRuntimeClasspath' || ["io.micronaut.aws:micronaut-function-aws-api-proxy-test"]
         'lambda_provided'      | 'compileClasspath'     || ["io.micronaut.aws:micronaut-function-aws-api-proxy", "io.micronaut.aws:micronaut-function-aws-custom-runtime"]
         'lambda_provided'      | 'developmentOnly'      || ["io.micronaut.aws:micronaut-function-aws-api-proxy-test"]
         'lambda_provided'      | 'testRuntimeClasspath' || ["io.micronaut.aws:micronaut-function-aws-api-proxy-test"]
+        'http_poja'            | 'compileClasspath'     || ['io.micronaut.servlet:micronaut-http-poja-apache']
+        'http_poja'            | 'testRuntimeClasspath' || ['io.micronaut.servlet:micronaut-http-poja-apache', 'io.micronaut.servlet:micronaut-http-poja-test']
 
         description =  String.join(",", coordinates)
     }

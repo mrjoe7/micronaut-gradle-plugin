@@ -54,6 +54,7 @@ class MicronautGraalPluginSpec extends AbstractEagerConfiguringFunctionalTest {
     void 'native-image is called with the generated JSON file directory (Micronaut Application)'() {
         given:
         withSwaggerMicronautApplication()
+        withNativeImageDryRun()
 
         when:
         def result = build('nativeCompile', '-i', '--stacktrace')
@@ -76,6 +77,7 @@ class MicronautGraalPluginSpec extends AbstractEagerConfiguringFunctionalTest {
     void 'native-image is called with the generated JSON file directory (regular Application)'() {
         given:
         withSwaggerApplication()
+        withNativeImageDryRun()
 
         when:
         def result = build('nativeCompile', '-i', '--stacktrace')
@@ -104,7 +106,7 @@ class MicronautGraalPluginSpec extends AbstractEagerConfiguringFunctionalTest {
                 implementation("io.swagger.core.v3:swagger-annotations")
             }
             micronaut {
-                version "3.5.1"
+                version "$micronautVersion"
                 runtime 'netty'
             }
             $repositoriesBlock
@@ -142,18 +144,17 @@ class Application {
         testProjectDir.newFolder('src', 'main', 'resources')
         testProjectDir.newFile('src/main/resources/application.yml') << 'micronaut.application.name: hello-world'
         settingsFile << "rootProject.name = 'hello-world'"
-        String micronautVersion = '3.5.1'
         buildFile << """
             plugins {
                 id "application"
                 id "io.micronaut.graalvm"
             }
             dependencies {
-                annotationProcessor(enforcedPlatform("io.micronaut:micronaut-bom:$micronautVersion"))
+                annotationProcessor(enforcedPlatform("io.micronaut.platform:micronaut-platform:$micronautVersion"))
                 annotationProcessor("io.micronaut:micronaut-inject-java")
                 annotationProcessor("io.micronaut.openapi:micronaut-openapi")
                 
-                implementation(enforcedPlatform("io.micronaut:micronaut-bom:$micronautVersion"))
+                implementation(enforcedPlatform("io.micronaut.platform:micronaut-platform:$micronautVersion"))
                 implementation("io.micronaut:micronaut-inject")
                 implementation("io.micronaut:micronaut-http-server-netty")
                 implementation("io.swagger.core.v3:swagger-annotations")

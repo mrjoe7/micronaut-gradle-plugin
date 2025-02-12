@@ -22,8 +22,8 @@ class LambdaNativeImageSpec extends AbstractFunctionalTest {
             }
             
             micronaut {
-                version "3.5.1"
-                runtime "netty"
+                version "$micronautVersion"
+                runtime "lambda_provided"
             }
             
             $repositoriesBlock
@@ -39,7 +39,7 @@ class LambdaNativeImageSpec extends AbstractFunctionalTest {
         """
 
         when:
-        def result = build('dockerfileNative', '-Pmicronaut.runtime=lambda')
+        def result = build('dockerfileNative')
 
         def dockerfileNativeTask = result.task(':dockerfileNative')
         def dockerFileNative = new File(testProjectDir.root, 'build/docker/native-main/DockerfileNative').readLines('UTF-8')
@@ -48,13 +48,12 @@ class LambdaNativeImageSpec extends AbstractFunctionalTest {
         dockerfileNativeTask.outcome == TaskOutcome.SUCCESS
 
         and:
-        dockerFileNative.find() { it.contains('-H:Class=io.micronaut.function.aws.runtime.MicronautLambdaRuntime')}
-        !dockerFileNative.find() { it.contains('com.example.Application')}
+        dockerFileNative.find() { it.endsWith(' io.micronaut.function.aws.runtime.MicronautLambdaRuntime') }
+        !dockerFileNative.find() { it.endsWith('com.example.Application') }
     }
 
     void 'native lambdas build in docker fetch the correct graalvm for #desc'() {
         given:
-        def graalVersion = '22.2.0'
         settingsFile << "rootProject.name = 'hello-world'"
         buildFile << """
             plugins {
@@ -64,8 +63,8 @@ class LambdaNativeImageSpec extends AbstractFunctionalTest {
             }
 
             micronaut {
-                version "3.5.1"
-                runtime "lambda"
+                version "$micronautVersion"
+                runtime "lambda_provided"
             }
 
             $repositoriesBlock
@@ -94,12 +93,12 @@ class LambdaNativeImageSpec extends AbstractFunctionalTest {
         dockerfileNativeTask.outcome == TaskOutcome.SUCCESS
 
         and:
-        dockerFileNative.find() { it.contains("linux-${archset}-${graalVersion}.tar.gz ") }
+        dockerFileNative.find() { it.contains("graalvm-jdk-17_linux-${archset}_bin.tar.gz ") }
 
         where:
         archset   | desc
         'aarch64' | 'ARM architecture'
-        'amd64'   | 'Intel architecture'
+        'x64'     | 'Intel architecture'
     }
 
     void 'it is possible to define the mainclass for a dockerfile native'() {
@@ -113,7 +112,7 @@ class LambdaNativeImageSpec extends AbstractFunctionalTest {
             }
             
             micronaut {
-                version "3.5.1"
+                version "$micronautVersion"
                 runtime "netty"
             }
             
@@ -147,8 +146,8 @@ class LambdaNativeImageSpec extends AbstractFunctionalTest {
         dockerfileNativeTask.outcome == TaskOutcome.SUCCESS
 
         and:
-        dockerFileNative.find() { it.contains('my.own.main.class')}
-        !dockerFileNative.find() { it.contains('com.example.Application')}
+        dockerFileNative.find() { it.contains('my.own.main.class') }
+        !dockerFileNative.find() { it.contains('com.example.Application') }
     }
 
     @Issue("https://github.com/micronaut-projects/micronaut-gradle-plugin/issues/171")
@@ -163,14 +162,14 @@ class LambdaNativeImageSpec extends AbstractFunctionalTest {
             }
 
             micronaut {
-                version "3.5.1"
-                runtime "netty"
+                version "$micronautVersion"
+                runtime "lambda_provided"
             }
 
             $repositoriesBlock
 
             dependencies {
-                implementation("io.micronaut:micronaut-validation")
+                implementation("io.micronaut.validation:micronaut-validation")
                 implementation("io.micronaut:micronaut-runtime")
                 implementation("io.micronaut.aws:micronaut-function-aws")
                 implementation("io.micronaut.aws:micronaut-function-aws-custom-runtime")
@@ -189,7 +188,7 @@ class LambdaNativeImageSpec extends AbstractFunctionalTest {
         """
 
         when:
-        def result = build('dockerfileNative', '-Pmicronaut.runtime=lambda')
+        def result = build('dockerfileNative')
 
         def dockerfileNativeTask = result.task(':dockerfileNative')
         def dockerFileNative = new File(testProjectDir.root, 'build/docker/native-main/DockerfileNative').readLines('UTF-8')
@@ -198,8 +197,8 @@ class LambdaNativeImageSpec extends AbstractFunctionalTest {
         dockerfileNativeTask.outcome == TaskOutcome.SUCCESS
 
         and:
-        !dockerFileNative.find() { it.contains('-H:Class=io.micronaut.function.aws.runtime.MicronautLambdaRuntime')}
-        dockerFileNative.find() { it.contains('-H:Class=com.example.BookLambdaRuntime')}
+        !dockerFileNative.find() { it.endsWith(' io.micronaut.function.aws.runtime.MicronautLambdaRuntime') }
+        dockerFileNative.find() { it.endsWith('com.example.BookLambdaRuntime') }
     }
 
     @Issue("https://github.com/micronaut-projects/micronaut-gradle-plugin/issues/279")
@@ -212,14 +211,14 @@ class LambdaNativeImageSpec extends AbstractFunctionalTest {
             }
 
             micronaut {
-                version "3.5.1"
-                runtime "netty"
+                version "$micronautVersion"
+                runtime "lambda_provided"
             }
 
             $repositoriesBlock
 
             dependencies {
-                implementation("io.micronaut:micronaut-validation")
+                implementation("io.micronaut.validation:micronaut-validation")
                 implementation("io.micronaut:micronaut-runtime")
                 implementation("io.micronaut.aws:micronaut-function-aws")
                 implementation("io.micronaut.aws:micronaut-function-aws-custom-runtime")
@@ -237,12 +236,12 @@ class LambdaNativeImageSpec extends AbstractFunctionalTest {
             }
 
             dockerfileNative {
-                baseImage('internal.proxy.com/amazonlinux:latest')
+                baseImage('internal.proxy.com/amazonlinux:2023')
             }
         """
 
         when:
-        def result = build('dockerfileNative', '-Pmicronaut.runtime=lambda')
+        def result = build('dockerfileNative')
 
         def dockerfileNativeTask = result.task(':dockerfileNative')
         def dockerFileNative = new File(testProjectDir.root, 'build/docker/native-main/DockerfileNative').readLines('UTF-8')
@@ -251,7 +250,7 @@ class LambdaNativeImageSpec extends AbstractFunctionalTest {
         dockerfileNativeTask.outcome == TaskOutcome.SUCCESS
 
         and:
-        dockerFileNative.find() { it.contains('internal.proxy.com/amazonlinux:latest')}
+        dockerFileNative.find() { it.contains('internal.proxy.com/amazonlinux:2023') }
     }
 
     @Issue("https://github.com/micronaut-projects/micronaut-gradle-plugin/issues/279")
@@ -264,14 +263,14 @@ class LambdaNativeImageSpec extends AbstractFunctionalTest {
             }
 
             micronaut {
-                version "3.5.1"
-                runtime "netty"
+                version "$micronautVersion"
+                runtime "lambda_provided"
             }
 
             $repositoriesBlock
 
             dependencies {
-                implementation("io.micronaut:micronaut-validation")
+                implementation("io.micronaut.validation:micronaut-validation")
                 implementation("io.micronaut:micronaut-runtime")
                 implementation("io.micronaut.aws:micronaut-function-aws")
                 implementation("io.micronaut.aws:micronaut-function-aws-custom-runtime")
@@ -290,7 +289,7 @@ class LambdaNativeImageSpec extends AbstractFunctionalTest {
         """
 
         when:
-        def result = build('dockerfileNative', '-Pmicronaut.runtime=lambda')
+        def result = build('dockerfileNative')
 
         def dockerfileNativeTask = result.task(':dockerfileNative')
         def dockerFileNative = new File(testProjectDir.root, 'build/docker/native-main/DockerfileNative').readLines('UTF-8')
@@ -299,7 +298,7 @@ class LambdaNativeImageSpec extends AbstractFunctionalTest {
         dockerfileNativeTask.outcome == TaskOutcome.SUCCESS
 
         and:
-        dockerFileNative.find() { it.contains('amazonlinux:latest')}
+        dockerFileNative.find() { it.contains('amazonlinux:2023') }
     }
 
     @Issue("https://github.com/micronaut-projects/micronaut-gradle-plugin/pull/537")
@@ -314,8 +313,8 @@ class LambdaNativeImageSpec extends AbstractFunctionalTest {
             }
             
             micronaut {
-                version "3.5.1"
-                runtime "lambda"
+                version "$micronautVersion"
+                runtime "lambda_provided"
             }
             
             $repositoriesBlock
@@ -325,8 +324,8 @@ class LambdaNativeImageSpec extends AbstractFunctionalTest {
             }
             
             java {
-                sourceCompatibility = JavaVersion.toVersion('11')
-                targetCompatibility = JavaVersion.toVersion('11')
+                sourceCompatibility = JavaVersion.toVersion('17')
+                targetCompatibility = JavaVersion.toVersion('17')
             }
             
             graalvmNative {
@@ -352,8 +351,63 @@ class LambdaNativeImageSpec extends AbstractFunctionalTest {
         dockerfileNativeTask.outcome == TaskOutcome.SUCCESS
 
         and:
-        !dockerFileNative.find() { it.contains('https://github.com/graalvm/graalvm-ce-builds/releases/download')}
-        dockerFileNative.find() { it.contains('https://releases.company.com/downloads')}
+        !dockerFileNative.find() { it.contains('https://github.com/graalvm/graalvm-ce-builds/releases/download') }
+        dockerFileNative.find() { it.contains('https://releases.company.com/downloads') }
     }
 
+    @Issue("https://github.com/micronaut-projects/micronaut-gradle-plugin/issues/753")
+    void 'can pickup a different native lambda runtime'() {
+        given:
+        settingsFile << "rootProject.name = 'hello-world'"
+        buildFile << """import io.micronaut.gradle.graalvm.NativeLambdaRuntime
+            plugins {
+                id "io.micronaut.minimal.application"
+                id "io.micronaut.graalvm"
+                id "io.micronaut.docker"
+            }
+
+            micronaut {
+                version "$micronautVersion"
+                runtime "lambda_provided"
+            }
+
+            $repositoriesBlock
+
+            dependencies {
+                implementation("io.micronaut.validation:micronaut-validation")
+                implementation("io.micronaut:micronaut-runtime")
+                runtimeOnly("ch.qos.logback:logback-classic")
+                testImplementation("io.micronaut:micronaut-http-client")
+            }
+
+            micronaut {
+                nativeLambda {
+                    lambdaRuntime = NativeLambdaRuntime.$runtime
+                }
+            }
+
+            java {
+                sourceCompatibility = JavaVersion.toVersion('17')
+                targetCompatibility = JavaVersion.toVersion('17')
+            }
+        """
+
+        when:
+        def result = build('dockerfileNative')
+
+        def dockerfileNativeTask = result.task(':dockerfileNative')
+        def dockerFileNative = new File(testProjectDir.root, 'build/docker/native-main/DockerfileNative').readLines('UTF-8')
+
+        then:
+        dockerfileNativeTask.outcome == TaskOutcome.SUCCESS
+
+        and:
+        dockerFileNative.find() { it.endsWith(mainClass) }
+
+        where:
+        runtime          | mainClass
+        'API_GATEWAY_V1' | 'io.micronaut.function.aws.runtime.MicronautLambdaRuntime'
+        'API_GATEWAY_V2' | 'io.micronaut.function.aws.runtime.APIGatewayV2HTTPEventMicronautLambdaRuntime'
+        'ALB'            | 'io.micronaut.function.aws.runtime.ApplicationLoadBalancerMicronautLambdaRuntime'
+    }
 }

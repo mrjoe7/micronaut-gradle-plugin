@@ -1,3 +1,5 @@
+import org.gradle.util.GradleVersion
+
 /*
  * Copyright 2017-2021 original authors
  *
@@ -22,6 +24,9 @@ plugins {
 repositories {
     mavenCentral()
     gradlePluginPortal()
+//    maven {
+//        url "https://s01.oss.sonatype.org/content/repositories/snapshots"
+//    }
 }
 
 dependencies {
@@ -31,6 +36,17 @@ dependencies {
     javadoc project(":micronaut-graalvm-plugin")
     javadoc project(":micronaut-aot-plugin")
     javadoc project(":micronaut-gradle-plugin")
+    javadoc project(":micronaut-openapi-plugin")
+    javadoc project(":micronaut-platform-catalog-plugin")
+    javadoc libs.micronaut.openapi.generator
     javadoc libs.bundles.optionalPlugins
     javadoc libs.shadowPlugin
+}
+
+asciidoctorj {
+    attributes 'native-build-tools-version': libs.versions.graalvmPlugin.get(),
+            'kotlin-version': libs.versions.kotlin.get(),
+            'micronaut-version': libs.versions.micronaut.platform.get(),
+            'gradle-version': GradleVersion.current().version,
+            'shadow-version': libs.versions.shadow.get()
 }

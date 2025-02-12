@@ -4,9 +4,6 @@ import io.micronaut.gradle.AbstractGradleBuildSpec
 import org.gradle.testkit.runner.GradleRunner
 
 abstract class AbstractFunctionalTest extends AbstractGradleBuildSpec {
-    public static final String MICRONAUT_VERSION = "3.4.0"
-    public static final String SHADE_VERSION = "7.1.2";
-    
     @Override
     protected GradleRunner newRunner() {
         GradleRunner.create()
@@ -21,13 +18,16 @@ abstract class AbstractFunctionalTest extends AbstractGradleBuildSpec {
         settingsFile.text = """
             pluginManagement {
                 repositories {
+                    ${guardString('mavenLocal()', allowMavenLocal)}
                     mavenCentral()
                     maven {
                         url = "${System.getProperty("internal.plugin.repo")}"
                     }
+                    ${guardString('maven { url = "https://s01.oss.sonatype.org/content/repositories/snapshots" }', allowSnapshots)}
                     gradlePluginPortal()
                 }
                 plugins {
+                    id 'io.micronaut.platform.catalog' version '${version}'
                     id 'io.micronaut.minimal.library' version '${version}'
                     id 'io.micronaut.minimal.application' version '${version}'
                     id 'io.micronaut.library' version '${version}'
@@ -35,6 +35,7 @@ abstract class AbstractFunctionalTest extends AbstractGradleBuildSpec {
                     id 'io.micronaut.graalvm' version '${version}'
                     id 'io.micronaut.docker' version '${version}'
                     id 'io.micronaut.aot' version '${version}'
+                    id 'io.micronaut.openapi' version '${version}'
                     id 'io.micronaut.test-resources' version '${version}'
                 }
             }

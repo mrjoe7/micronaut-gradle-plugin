@@ -1,7 +1,7 @@
 package io.micronaut.gradle
 
-
 import org.gradle.testkit.runner.TaskOutcome
+import spock.lang.Ignore
 import spock.lang.IgnoreIf
 import spock.lang.Requires
 
@@ -27,7 +27,7 @@ include "one"
             $repositoriesBlock
             
             dependencies {
-                implementation("io.micronaut:micronaut-core:3.5.1")
+                implementation("io.micronaut:micronaut-core:$micronautVersion")
             }
  
         """
@@ -40,7 +40,7 @@ include "one"
             }
             
             micronaut {
-                version "3.5.1"
+                version "$micronautVersion"
             }
             
             $repositoriesBlock
@@ -92,6 +92,7 @@ class Application {
 """
     }
 
+    @Ignore("Test is flaky because of bug in GraalVM 23")
     void 'test build native image in subproject'() {
         when:
         def result = build('javaToolchains', 'two:nativeCompile', '-i', '--stacktrace')

@@ -28,7 +28,6 @@ import org.gradle.api.tasks.PathSensitivity;
 import org.gradle.api.tasks.TaskAction;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
@@ -38,13 +37,13 @@ import java.util.stream.Stream;
 public abstract class SimpleSourceProcessor extends DefaultTask {
     @InputDirectory
     @PathSensitive(PathSensitivity.RELATIVE)
-    abstract DirectoryProperty getTemplates();
+    public abstract DirectoryProperty getTemplates();
 
     @OutputDirectory
-    abstract DirectoryProperty getOutputDirectory();
+    public abstract DirectoryProperty getOutputDirectory();
 
     @Input
-    abstract MapProperty<String, String> getReplacements();
+    public abstract MapProperty<String, String> getReplacements();
 
     @TaskAction
     public void process() throws IOException {
@@ -59,11 +58,11 @@ public abstract class SimpleSourceProcessor extends DefaultTask {
                     if (Files.isDirectory(path)) {
                         Files.createDirectories(target);
                     } else if (Files.isRegularFile(path)) {
-                        String contents = new String(Files.readAllBytes(path), StandardCharsets.UTF_8);
+                        String contents = Files.readString(path);
                         for (Map.Entry<String, String> entry : replacements.entrySet()) {
                             contents = contents.replace(entry.getKey(), entry.getValue());
                         }
-                        Files.write(target, contents.getBytes(StandardCharsets.UTF_8));
+                        Files.writeString(target, contents);
                     }
                 } catch (IOException e) {
                     throw new GradleException("Unable to create target directory " + target, e);

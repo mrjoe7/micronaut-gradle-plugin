@@ -16,16 +16,12 @@ class MicronautRuntimeSpec extends AbstractGradleBuildSpec {
             }
             
             micronaut {
-                version "3.5.1"
+                version "$micronautVersion"
                 runtime "$runtime"
                 testRuntime "junit5"
             }
             
             $repositoriesBlock
-            
-            repositories {
-                maven { url "https://s01.oss.sonatype.org/content/repositories/snapshots" }
-            }
             
             dependencies {
                 runtimeOnly("ch.qos.logback:logback-classic")
@@ -87,6 +83,6 @@ public class FooControllerTest {
         task.outcome == TaskOutcome.SUCCESS
 
         where:
-        runtime << ["netty", "lambda", "jetty", "oracle_function", "tomcat"]
+        runtime << ["netty", "lambda_provided", "lambda_java", "jetty", "oracle_function", "tomcat", "http_poja"]
     }
 }

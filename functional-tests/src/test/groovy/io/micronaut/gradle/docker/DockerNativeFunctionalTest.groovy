@@ -1,17 +1,23 @@
 package io.micronaut.gradle.docker
 
-import io.micronaut.gradle.AbstractGradleBuildSpec
+import io.micronaut.gradle.DefaultVersions
 import io.micronaut.gradle.fixtures.AbstractEagerConfiguringFunctionalTest
 import org.gradle.testkit.runner.TaskOutcome
 import spock.lang.IgnoreIf
 import spock.lang.Issue
 import spock.lang.Requires
 
-@Requires({ AbstractGradleBuildSpec.graalVmAvailable })
+@Requires({ graalVmAvailable })
 @IgnoreIf({ os.windows })
 class DockerNativeFunctionalTest extends AbstractEagerConfiguringFunctionalTest {
 
-    def "test build docker native image for runtime #runtime"() {
+    @Lazy
+    String defaultBaseImage = 'cgr.dev/chainguard/wolfi-base:latest'
+
+    @Lazy
+    String defaultDockerFrom = "FROM $defaultBaseImage"
+
+    def "test build docker native image for runtime #runtime (JDK #jdk)"() {
         given:
         settingsFile << "rootProject.name = 'hello-world'"
         println settingsFile.text
@@ -23,7 +29,7 @@ class DockerNativeFunctionalTest extends AbstractEagerConfiguringFunctionalTest 
             }
             
             micronaut {
-                version "3.5.1"
+                version "$micronautVersion"
                 runtime "$runtime"
             }
             
@@ -39,8 +45,12 @@ class DockerNativeFunctionalTest extends AbstractEagerConfiguringFunctionalTest 
             dockerfileNative {
                 args('-Xmx64m')
                 instruction \"\"\"HEALTHCHECK CMD curl -s localhost:8090/health | grep '"status":"UP"'\"\"\"
+                jdkVersion = "$jdk"
             }
             
+            graalvmNative.binaries.all {
+                buildArgs.addAll(["--exclude-config", "micronaut-function-aws-api-proxy-.*.jar", "META-INF/native-image/.*.properties"])
+            }
         """
         testProjectDir.newFolder("src", "main", "java", "example")
         def resources = testProjectDir.newFolder("src", "main", "resources")
@@ -92,10 +102,11 @@ micronaut:
         task.outcome == TaskOutcome.SUCCESS
 
         where:
-        runtime  | nativeImage
-        "netty"  | 'FROM ghcr.io/graalvm/native-image:ol7-java'
-        "lambda" | 'FROM amazonlinux:latest AS graalvm'
-        "jetty"  | 'FROM ghcr.io/graalvm/native-image:ol7-java'
+        runtime           | jdk | nativeImage
+        "netty"           | 17  | "FROM ghcr.io/graalvm/native-image-community:17-ol${DefaultVersions.ORACLELINUX}"
+        "lambda_provided" | 17  | "FROM public.ecr.aws/amazonlinux/amazonlinux:${DefaultVersions.AMAZONLINUX} AS graalvm"
+        "lambda_provided" | 21  | "FROM public.ecr.aws/amazonlinux/amazonlinux:${DefaultVersions.AMAZONLINUX} AS graalvm"
+        "jetty"           | 17  | "FROM ghcr.io/graalvm/native-image-community:17-ol${DefaultVersions.ORACLELINUX}"
     }
 
     void 'build mostly static native images when using distroless docker image for runtime=#runtime'() {
@@ -109,7 +120,7 @@ micronaut:
             }
 
             micronaut {
-                version "3.5.1"
+                version "$micronautVersion"
 
                 runtime "$runtime"
             }
@@ -128,6 +139,10 @@ micronaut:
             dockerfileNative {
                 baseImage("gcr.io/distroless/cc-debian10")
             }
+
+            graalvmNative.binaries.all {
+                buildArgs.addAll(["--exclude-config", "micronaut-function-aws-api-proxy-.*.jar", "META-INF/native-image/.*.properties"])
+            }
         """
 
         when:
@@ -144,10 +159,83 @@ micronaut:
         dockerFileNative.find { s -> s.contains('-H:+StaticExecutableWithDynamicLibC') }
 
         where:
-        runtime << ['netty', 'lambda']
+        runtime << ['netty', 'lambda_provided']
     }
 
-    void 'use alpine-glibc by default and do not build mostly static native images'() {
+    void 'can set jdkVersion as #jdkVersion with #dsl DSL for native images'() {
+        given:
+        settingsFile << "rootProject.name = 'hello-world'"
+        if (kotlinDsl) {
+            kotlinBuildFile << """
+                plugins {
+                    id("io.micronaut.minimal.application")
+                    id("io.micronaut.docker")
+                    id("io.micronaut.graalvm")
+                }
+
+                micronaut {
+                    version("$micronautVersion")
+                    runtime("netty")
+                }
+
+                $repositoriesBlock
+
+                application {
+                    mainClass.set("com.example.Application")
+                }
+
+                tasks.named<io.micronaut.gradle.docker.NativeImageDockerfile>("dockerfileNative") {
+                   jdkVersion.set("$jdkVersion")
+                }
+            """.stripIndent()
+        } else {
+            buildFile << """
+                plugins {
+                    id "io.micronaut.minimal.application"
+                    id "io.micronaut.docker"
+                    id "io.micronaut.graalvm"
+                }
+
+                micronaut {
+                    version "$micronautVersion"
+                    runtime "netty"
+                }
+
+                $repositoriesBlock
+
+                application {
+                    mainClass.set("com.example.Application")
+                }
+
+                dockerfileNative {
+                    jdkVersion = '$jdkVersion'
+                }
+            """.stripIndent()
+        }
+
+        when:
+        def result = build('dockerfileNative')
+
+        def dockerfileNativeTask = result.task(':dockerfileNative')
+        def dockerFileNative = new File(testProjectDir.root, 'build/docker/native-main/DockerfileNative').readLines('UTF-8')
+
+        then:
+        dockerfileNativeTask.outcome == TaskOutcome.SUCCESS
+
+        and:
+        dockerFileNative.find { s -> s.contains("FROM ghcr.io/graalvm/native-image-community:$expected AS graalvm") }
+
+        where:
+        jdkVersion | kotlinDsl || expected
+        '21'       | true      || '21-ol9'
+        '21'       | false     || '21-ol9'
+        '17'       | true      || '17-ol9'
+        '17'       | false     || '17-ol9'
+
+        dsl = kotlinDsl ? 'kotlin' : 'groovy'
+    }
+
+    void 'use wolfi-base by default and do not build mostly static native images'() {
         given:
         settingsFile << "rootProject.name = 'hello-world'"
         buildFile << """
@@ -158,7 +246,7 @@ micronaut:
             }
 
             micronaut {
-                version "3.5.1"
+                version "$micronautVersion"
                 runtime "netty"
             }
 
@@ -184,11 +272,11 @@ micronaut:
         dockerfileNativeTask.outcome == TaskOutcome.SUCCESS
 
         and:
-        dockerFileNative.find { s -> s.contains('FROM frolvlad/alpine-glibc:alpine-3.12') }
+        dockerFileNative.find { s -> s.contains(defaultBaseImage) }
         dockerFileNative.find { s -> !s.contains('-H:+StaticExecutableWithDynamicLibC') }
     }
 
-    void 'do not use alpine-glibc for lambda runtime'() {
+    void 'do not use wolfi-base for lambda_provided runtime'() {
         given:
         settingsFile << "rootProject.name = 'hello-world'"
         buildFile << """
@@ -199,8 +287,8 @@ micronaut:
             }
 
             micronaut {
-                version "3.5.1"
-                runtime "lambda"
+                version "$micronautVersion"
+                runtime "lambda_provided"
             }
 
             $repositoriesBlock
@@ -225,11 +313,11 @@ micronaut:
         dockerfileNativeTask.outcome == TaskOutcome.SUCCESS
 
         and:
-        dockerFileNative.find { s -> !s.contains('FROM frolvlad/alpine-glibc:alpine-3.12') }
+        dockerFileNative.find { s -> !s.contains('FROM cgr.dev/chainguard/wolfi-base:latest') }
         dockerFileNative.find { s -> !s.contains('-H:+StaticExecutableWithDynamicLibC') }
     }
 
-    def "test build docker native image for lambda with custom main"() {
+    def "test build docker native image for lambda_provided with custom main"() {
         given:
         settingsFile << "rootProject.name = 'hello-world'"
         buildFile << """
@@ -240,8 +328,8 @@ micronaut:
             }
             
             micronaut {
-                version "3.5.1"
-                runtime "lambda"
+                version "$micronautVersion"
+                runtime "lambda_provided"
             }
             
             $repositoriesBlock
@@ -260,6 +348,10 @@ micronaut:
             }
             
             mainClassName="example.Application"
+
+            graalvmNative.binaries.all {
+                buildArgs.addAll(["--exclude-config", "micronaut-function-aws-api-proxy-.*.jar", "META-INF/native-image/.*.properties"])
+            }
         """
         testProjectDir.newFolder("src", "main", "java", "other")
         def javaFile = testProjectDir.newFile("src/main/java/other/Application.java")
@@ -294,7 +386,7 @@ class Application {
             }
             
             micronaut {
-                version "3.5.1"
+                version "$micronautVersion"
             }
             
             $repositoriesBlock
@@ -308,8 +400,8 @@ class Application {
             }
             
             java {
-                sourceCompatibility = JavaVersion.toVersion('8')
-                targetCompatibility = JavaVersion.toVersion('8')
+                sourceCompatibility = JavaVersion.toVersion('17')
+                targetCompatibility = JavaVersion.toVersion('17')
             }
             
             dockerfile {
@@ -373,7 +465,7 @@ class Application {
             }
             
             micronaut {
-                version "3.5.1"
+                version "$micronautVersion"
                 runtime "netty"
                 testRuntime "junit5"
             }
@@ -413,7 +505,7 @@ class Application {
             }
             
             micronaut {
-                version "3.5.1"
+                version "$micronautVersion"
                 runtime "$runtime"
             }
             
@@ -482,10 +574,10 @@ class Application {
         dockerFileNative.find { s -> s.contains('-Xmx64m') }
 
         where:
-        runtime  | nativeImage
-        "netty"  | 'FROM ghcr.io/graalvm/native-image:ol7-java'
-        "lambda" | 'FROM amazonlinux:latest AS graalvm'
-        "jetty"  | 'FROM ghcr.io/graalvm/native-image:ol7-java'
+        runtime           | nativeImage
+        "netty"           | "FROM ghcr.io/graalvm/native-image-community:17-ol${DefaultVersions.ORACLELINUX}"
+        "lambda_provided" | 'FROM amazonlinux:2023 AS graalvm'
+        "jetty"           | "FROM ghcr.io/graalvm/native-image-community:17-ol${DefaultVersions.ORACLELINUX}"
     }
 
     @Issue("https://github.com/micronaut-projects/micronaut-gradle-plugin/issues/402")
@@ -500,7 +592,7 @@ class Application {
             }
             
             micronaut {
-                version "3.4.0"
+                version "$micronautVersion"
                 runtime "netty"
             }
             
@@ -555,31 +647,40 @@ micronaut:
         name: test
 """
 
+        when:
+        build "dockerfileNative"
+        def dockerFile = normalizeLineEndings(file("build/docker/native-main/DockerfileNative").text)
+        dockerFile = dockerFile.replaceAll("[0-9]\\.[0-9]+\\.[0-9]+", "4.0.0")
+                .replaceAll("RUN native-image .*", "RUN native-image")
+                .trim()
 
-        def result = build('dockerBuildNative')
-
-        def task = result.task(":dockerBuildNative")
-        def dockerFile = new File(testProjectDir.root, 'build/docker/native-main/DockerfileNative').text.trim()
-
-        expect:
-        task.outcome == TaskOutcome.SUCCESS
+        then:
         dockerFile == """
-FROM ghcr.io/graalvm/native-image:ol7-java17-22.2.0 AS graalvm
-WORKDIR /home/alternate
-COPY layers/libs /home/alternate/libs
-COPY layers/classes /home/alternate/classes
-COPY layers/resources /home/alternate/resources
-COPY layers/application.jar /home/alternate/application.jar
-RUN mkdir /home/alternate/config-dirs
-COPY config-dirs/generateResourcesConfigFile /home/alternate/config-dirs/generateResourcesConfigFile
-RUN native-image -cp /home/alternate/libs/*.jar:/home/alternate/resources:/home/alternate/application.jar --no-fallback -H:Name=application $graalVMBuilderExports -H:ConfigurationFileDirectories=/home/alternate/config-dirs/generateResourcesConfigFile -H:Class=example.Application
-FROM frolvlad/alpine-glibc:alpine-3.12
-RUN apk --no-cache update && apk add libstdc++
-EXPOSE 8080
-HEALTHCHECK CMD curl -s localhost:8090/health | grep '"status":"UP"'
-COPY --from=graalvm /home/alternate/application /app/application
-ENTRYPOINT ["/app/application", "-Xmx64m"]
-""".trim()
+            FROM ghcr.io/graalvm/native-image-community:17-ol${DefaultVersions.ORACLELINUX} AS graalvm
+            WORKDIR /home/alternate
+            COPY --link layers/libs /home/alternate/libs
+            COPY --link layers/app /home/alternate/
+            COPY --link layers/resources /home/alternate/resources
+            RUN mkdir /home/alternate/config-dirs
+            RUN mkdir -p /home/alternate/config-dirs/generateResourcesConfigFile
+            RUN mkdir -p /home/alternate/config-dirs/io.netty/netty-common/4.0.0.Final
+            RUN mkdir -p /home/alternate/config-dirs/io.netty/netty-transport/4.0.0.Final
+            COPY --link config-dirs/generateResourcesConfigFile /home/alternate/config-dirs/generateResourcesConfigFile
+            COPY --link config-dirs/io.netty/netty-common/4.0.0.Final /home/alternate/config-dirs/io.netty/netty-common/4.0.0.Final
+            COPY --link config-dirs/io.netty/netty-transport/4.0.0.Final /home/alternate/config-dirs/io.netty/netty-transport/4.0.0.Final
+            RUN native-image
+            FROM cgr.dev/chainguard/wolfi-base:latest
+            EXPOSE 8080
+            HEALTHCHECK CMD curl -s localhost:8090/health | grep '"status":"UP"'
+            COPY --link --from=graalvm /home/alternate/application /app/application
+            ENTRYPOINT ["/app/application", "-Xmx64m"]""".stripIndent().trim()
+
+        when:
+        def result = build ":dockerBuildNative"
+        def task = result.task(":dockerBuildNative")
+
+        then:
+        task.outcome == TaskOutcome.SUCCESS
 
     }
 
@@ -594,7 +695,7 @@ ENTRYPOINT ["/app/application", "-Xmx64m"]
 }
 
 micronaut {
-    version "3.4.0"
+    version "$micronautVersion"
     runtime "netty"
 }
             
@@ -616,4 +717,202 @@ afterEvaluate {
         then:
         task.outcome == TaskOutcome.SUCCESS
     }
+
+    @Issue("https://github.com/micronaut-projects/micronaut-gradle-plugin/issues/667")
+    def "can tweak the generated docker file"() {
+        given:
+        settingsFile << "rootProject.name = 'hello-world'"
+        buildFile << """
+            plugins {
+                id "io.micronaut.minimal.application"
+                id "io.micronaut.docker"
+                id "io.micronaut.graalvm"
+            }
+            
+            $repositoriesBlock
+
+            micronaut {
+                version "$micronautVersion"
+            }
+
+            mainClassName="example.Application"
+
+            tasks.withType(io.micronaut.gradle.docker.DockerBuildOptions).configureEach {
+                editDockerfile {
+                    after('COPY --link layers/libs /home/app/libs') {
+                        insert('COPY --link server.iprof /home/app/server.iprof')
+                    } 
+                }
+            }
+            
+        """
+        testProjectDir.newFolder("src", "main", "java", "example")
+        def javaFile = testProjectDir.newFile("src/main/java/example/Application.java")
+        javaFile.parentFile.mkdirs()
+        javaFile << """
+package example;
+
+class Application {
+    public static void main(String... args) {
+    
+    }
+}
+"""
+
+        when:
+        def result = build('dockerfile', '-s')
+
+        then:
+        def dockerfile = new File(testProjectDir.root, 'build/docker/main/Dockerfile').text
+        dockerfile == """FROM eclipse-temurin:17-jre
+WORKDIR /home/app
+COPY --link layers/libs /home/app/libs
+COPY --link server.iprof /home/app/server.iprof
+COPY --link layers/app /home/app/
+COPY --link layers/resources /home/app/resources
+EXPOSE 8080
+ENTRYPOINT ["java", "-jar", "/home/app/application.jar"]
+"""
+
+        when:
+        result = build('dockerfileNative', '-s')
+
+        then:
+        def dockerfileNative = new File(testProjectDir.root, 'build/docker/native-main/DockerfileNative').text
+        dockerfileNative == """FROM ghcr.io/graalvm/native-image-community:17-ol${DefaultVersions.ORACLELINUX} AS graalvm
+WORKDIR /home/app
+COPY --link layers/libs /home/app/libs
+COPY --link server.iprof /home/app/server.iprof
+COPY --link layers/app /home/app/
+COPY --link layers/resources /home/app/resources
+RUN mkdir /home/app/config-dirs
+RUN mkdir -p /home/app/config-dirs/generateResourcesConfigFile
+COPY --link config-dirs/generateResourcesConfigFile /home/app/config-dirs/generateResourcesConfigFile
+RUN native-image -cp /home/app/libs/*.jar:/home/app/resources:/home/app/application.jar --no-fallback -o application -H:ConfigurationFileDirectories=/home/app/config-dirs/generateResourcesConfigFile example.Application
+${defaultDockerFrom}
+EXPOSE 8080
+COPY --link --from=graalvm /home/app/application /app/application
+ENTRYPOINT ["/app/application"]
+"""
+    }
+
+    @Issue("https://github.com/micronaut-projects/micronaut-gradle-plugin/issues/667")
+    def "dockerfile tweaks participate in up-to-date checking"() {
+        given:
+        settingsFile << "rootProject.name = 'hello-world'"
+        buildFile << """
+            plugins {
+                id "io.micronaut.minimal.application"
+                id "io.micronaut.docker"
+                id "io.micronaut.graalvm"
+            }
+            
+            $repositoriesBlock
+
+            micronaut {
+                version "$micronautVersion"
+            }
+
+            mainClassName="example.Application"
+
+            tasks.withType(io.micronaut.gradle.docker.DockerBuildOptions).configureEach {
+                editDockerfile {
+                    after('COPY --link layers/libs /home/app/libs') {
+                        insert('COPY --link server.iprof /home/app/server.iprof')
+                    } 
+                }
+            }
+            
+        """
+        testProjectDir.newFolder("src", "main", "java", "example")
+        def javaFile = testProjectDir.newFile("src/main/java/example/Application.java")
+        javaFile.parentFile.mkdirs()
+        javaFile << """
+package example;
+
+class Application {
+    public static void main(String... args) {
+    
+    }
+}
+"""
+
+        when:
+        def result = build('dockerfile', '-s')
+
+        then:
+        def dockerfile = new File(testProjectDir.root, 'build/docker/main/Dockerfile').text
+        dockerfile == """FROM eclipse-temurin:17-jre
+WORKDIR /home/app
+COPY --link layers/libs /home/app/libs
+COPY --link server.iprof /home/app/server.iprof
+COPY --link layers/app /home/app/
+COPY --link layers/resources /home/app/resources
+EXPOSE 8080
+ENTRYPOINT ["java", "-jar", "/home/app/application.jar"]
+"""
+
+        when:
+        result = build('dockerfile', '-s')
+
+        then:
+        result.task(":dockerfile").outcome == TaskOutcome.UP_TO_DATE
+
+        when:
+        buildFile << """
+            tasks.withType(io.micronaut.gradle.docker.DockerBuildOptions).configureEach {
+                editDockerfile {
+                    after('COPY --link server.iprof /home/app/server.iprof') {
+                        insert('COPY --link README.TXT /home/app/README.TXT')
+                    } 
+                }
+            }
+        """
+        result = build('dockerfile', '-s')
+
+        then:
+        result.task(":dockerfile").outcome == TaskOutcome.SUCCESS
+
+    }
+
+    @Issue("https://github.com/micronaut-projects/micronaut-gradle-plugin/issues/756")
+    def "should not generate empty RUN command"() {
+        given:
+        settingsFile << "rootProject.name = 'hello-world'"
+        buildFile << """
+            plugins {
+                id "io.micronaut.minimal.application"
+                id "io.micronaut.docker"
+                id "io.micronaut.graalvm"
+            }
+
+            micronaut {
+                version "$micronautVersion"
+
+                runtime "netty"
+            }
+
+            $repositoriesBlock
+
+            application {
+                mainClass.set("com.example.Application")
+            }
+
+            tasks.named("dockerfileNative") {
+                baseImage('ubuntu:22.04')
+                instruction 'RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*'
+                instruction 'HEALTHCHECK CMD curl -s localhost:8080/endpoints/health | grep \\'"status":"UP"\\''
+            }
+            
+        """
+
+        when:
+        def result = build('dockerfileNative')
+        def dockerFileNative = new File(testProjectDir.root, 'build/docker/native-main/DockerfileNative').readLines('UTF-8')
+        def emptyRunLines = dockerFileNative.findAll { it == "RUN " }
+
+        then:
+        emptyRunLines.isEmpty()
+    }
+
 }

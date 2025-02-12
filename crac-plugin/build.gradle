@@ -9,10 +9,8 @@ micronautPlugins {
 }
 
 dependencies {
-    api project(":micronaut-minimal-plugin")
+    api projects.micronautMinimalPlugin
+    api projects.micronautDockerPlugin
 
-    api project(":micronaut-docker-plugin")
-
-    testCompileOnly(libs.jetbrains.annotations)
-    testImplementation testFixtures(project(":micronaut-minimal-plugin"))
+    testImplementation testFixtures(projects.micronautMinimalPlugin)
 }
